@@ -151,9 +151,13 @@ class PlaywrightBrowserRuntime:
             async_playwright = self._playwright_factory()
             self._driver = await async_playwright().start()
 
+            self._downloads_dir.mkdir(parents=True, exist_ok=True)
             launch_options: dict[str, Any] = {
                 "headless": self._settings.headless,
                 "args": list(self._settings.args),
+                # A launch option, not a context one: the browser process owns the
+                # directory downloads are staged in.
+                "downloads_path": str(self._downloads_dir),
             }
             if self._settings.executable_path is not None:
                 # Also bypasses Playwright's browser-revision check, which matters when
@@ -165,10 +169,7 @@ class PlaywrightBrowserRuntime:
             return self._browser
 
     def _context_options(self) -> dict[str, Any]:
-        options: dict[str, Any] = {
-            "accept_downloads": True,
-            "downloads_path": str(self._downloads_dir),
-        }
+        options: dict[str, Any] = {"accept_downloads": True}
         if self._settings.user_agent is not None:
             options["user_agent"] = self._settings.user_agent
         if self._settings.storage_state_path is not None:

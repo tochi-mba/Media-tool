@@ -96,7 +96,10 @@ class TestLaunching:
         async with runtime.acquire_page():
             pass
 
-        assert factory.driver.chromium.launch_options == {"headless": True, "args": []}
+        options = factory.driver.chromium.launch_options
+        assert options is not None
+        assert options["headless"] is True
+        assert options["args"] == []
         await runtime.aclose()
 
     async def test_an_explicit_binary_is_passed_through(
@@ -145,13 +148,18 @@ class TestContexts:
     async def test_downloads_land_in_the_configured_directory(
         self, factory: FakePlaywrightFactory, tmp_path: Path
     ) -> None:
+        # A launch option rather than a context one -- the browser process owns the
+        # staging directory. Passing it to new_context is a TypeError against the real
+        # driver, which the fake alone would not catch.
         runtime = make_runtime(factory, tmp_path)
 
         async with runtime.acquire_page():
             pass
 
-        options = factory.browser.contexts[0].options
+        options = factory.driver.chromium.launch_options
+        assert options is not None
         assert options["downloads_path"] == str(tmp_path / "downloads")
+        assert (tmp_path / "downloads").is_dir()
         await runtime.aclose()
 
     async def test_each_acquisition_gets_a_fresh_context(

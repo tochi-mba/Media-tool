@@ -57,11 +57,13 @@ class FakePage:
         download: FakeDownload | None = None,
         fail_on: dict[str, Exception] | None = None,
         never_downloads: bool = False,
+        capture_error: Exception | None = None,
     ) -> None:
         self._texts = texts or {}
         self._download = download
         self._fail_on = fail_on or {}
         self._never_downloads = never_downloads
+        self._capture_error = capture_error
 
         self.actions: list[tuple[str, str]] = []
         self.closed = False
@@ -98,6 +100,9 @@ class FakePage:
     async def expect_download(
         self, *, timeout: float | None = None
     ) -> AsyncIterator[FakeDownloadHandle]:
+        if self._capture_error is not None:
+            raise self._capture_error
+
         if self._never_downloads:
             msg = "no download started"
             raise TimeoutError(msg)
@@ -157,6 +162,9 @@ class FakeContext:
         self.closed = True
 
 
+_CONTEXT_OPTIONS = frozenset({"accept_downloads", "storage_state", "user_agent"})
+
+
 class FakeBrowser:
     def __init__(self, page: FakeNativePage) -> None:
         self.contexts: list[FakeContext] = []
@@ -165,6 +173,13 @@ class FakeBrowser:
         self._page = page
 
     async def new_context(self, **options: Any) -> FakeContext:
+        # Mirrors the real signature: Playwright raises TypeError for unknown context
+        # options, so the fake must too -- otherwise it teaches the wrong contract.
+        unknown = set(options) - _CONTEXT_OPTIONS
+        if unknown:
+            msg = f"new_context() got unexpected keyword arguments: {sorted(unknown)}"
+            raise TypeError(msg)
+
         context = FakeContext(options, self._page)
         self.contexts.append(context)
         return context

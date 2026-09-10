@@ -1,0 +1,15 @@
+{
+  "name": "example",
+  "start_url": "{base_url}/search?q={query}",
+  "steps": [
+    { "action": "wait_for", "selector": ".result" }
+  ],
+  "result_selector": ".result",
+  "match": {
+    "text_contains": ["{name}", "{episode_tag}"]
+  },
+  "download_trigger": {
+    "action": "click",
+    "selector": ".result a.download"
+  }
+}

@@ -113,6 +113,7 @@ ignore = [
 # shape ASYNC109 discourages -- but wrapping each call in asyncio.timeout would fight
 # the driver's own cancellation rather than cooperate with it.
 "src/media_tool/providers/browser/*" = ["ASYNC109"]
+"src/media_tool/providers/browser/recipes.py" = ["ASYNC109", "TC001", "TC003"]
 # A fake exists to be substitutable for the real thing, so it mirrors the real
 # signatures exactly -- unused parameters, timeout arguments, blocking calls and all.
 "tests/fakes/*" = ["ASYNC109", "ASYNC240", "ARG002"]
@@ -239,6 +240,9 @@ source_modules = [
     "media_tool.providers.registry",
 ]
 forbidden_modules = ["playwright"]
+# The registry constructs the browser adapter, so it imports that module -- but it
+# still must not reach Playwright itself, which is what this asserts.
+allow_indirect_imports = true
 # Every non-browser provider module is added to this list as it is created.
 # media_tool.providers.browser is deliberately never listed: it is the single
 # adapter allowed to import Playwright.
