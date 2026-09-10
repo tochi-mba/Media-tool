@@ -17,8 +17,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from media_tool.core.config import BrowserSettings
+from media_tool.core.keyring.credentials import FormSecrets
 from media_tool.domain.media import MediaQuery
-from media_tool.providers.base import ProviderNotFoundError
+from media_tool.providers.base import (
+    ProviderCredentialMissingError,
+    ProviderError,
+    ProviderNotFoundError,
+)
 from media_tool.providers.browser.download_provider import BrowserDownloadProvider
 from media_tool.providers.browser.playwright_runtime import PlaywrightBrowserRuntime
 from media_tool.providers.browser.recipes import SiteRecipe
@@ -154,3 +159,124 @@ async def test_the_browser_survives_several_downloads(
 
     assert first.sha256 != second.sha256
     assert await provider.healthy() is True
+
+
+LOGIN_SECRETS = FormSecrets(
+    service="fixture-site", fields={"username": "eve", "password": "hunter2"}
+)
+
+
+def login_recipe_for(site_url: str) -> SiteRecipe:
+    """A recipe that must sign in before there is anything to download."""
+    return SiteRecipe.model_validate(
+        {
+            "name": "fixture-login",
+            "start_url": f"{site_url}/login.html?q={{query}}",
+            "login": {"service": "fixture-site"},
+            "steps": [
+                {"action": "wait_for", "selector": "form#signin"},
+                {"action": "fill", "selector": "#user", "value": "{secret.username}"},
+                {"action": "fill", "selector": "#pass", "value": "{secret.password}"},
+                {"action": "click", "selector": "form#signin button[type=submit]"},
+                {"action": "wait_for", "selector": ".result"},
+            ],
+            "result_selector": ".result",
+            "match": {"text_contains": ["{name}", "{episode_tag}"]},
+            "download_trigger": {"action": "click", "selector": ".result a.download"},
+        }
+    )
+
+
+class TestLoggingInForReal:
+    """A real browser, really typing a password into a real form.
+
+    The fake page cannot prove that `fill` puts a value where the site can read it, or
+    that a site which hides its results until sign-in stays hidden when the fill is
+    wrong. That is the class of bug the fake driver taught us to distrust.
+    """
+
+    async def test_it_signs_in_and_captures_the_file(
+        self, site_url: str, chromium_executable: str | None, tmp_path: Path
+    ) -> None:
+        store = LocalArtifactStore(
+            root=tmp_path / "artifacts", clock=FakeClock(), max_file_bytes=10_000_000
+        )
+        runtime = PlaywrightBrowserRuntime(
+            BrowserSettings(executable_path=chromium_executable),  # type: ignore[arg-type]
+            downloads_dir=tmp_path / "downloads",
+        )
+        provider = BrowserDownloadProvider(runtime=runtime, recipe=login_recipe_for(site_url))
+
+        try:
+            assert provider.requires_login == "fixture-site"
+
+            with store.reserve(account=ALICE, job_id="live-login", index=0) as sink:
+                artifact = await provider.download(
+                    query=SEVERANCE, sink=sink, secrets=LOGIN_SECRETS
+                )
+        finally:
+            await runtime.aclose()
+
+        assert artifact.size_bytes > 0
+        assert store.locate(
+            account=ALICE, job_id="live-login", index=0, filename=artifact.filename
+        ).exists()
+
+    async def test_the_wrong_password_finds_nothing_to_download(
+        self, site_url: str, chromium_executable: str | None, tmp_path: Path
+    ) -> None:
+        # The fixture hides its results until the right values are typed, so this is a
+        # real check that the values reached the form rather than a check on our own
+        # substitution.
+        store = LocalArtifactStore(
+            root=tmp_path / "artifacts", clock=FakeClock(), max_file_bytes=10_000_000
+        )
+        runtime = PlaywrightBrowserRuntime(
+            BrowserSettings(
+                executable_path=chromium_executable,  # type: ignore[arg-type]
+                action_timeout_ms=2_000,
+            ),
+            downloads_dir=tmp_path / "downloads",
+        )
+        provider = BrowserDownloadProvider(runtime=runtime, recipe=login_recipe_for(site_url))
+        wrong = FormSecrets(
+            service="fixture-site", fields={"username": "eve", "password": "not-it"}
+        )
+
+        try:
+            with (
+                store.reserve(account=ALICE, job_id="live-login", index=0) as sink,
+                pytest.raises(ProviderError) as caught,
+            ):
+                await provider.download(query=SEVERANCE, sink=sink, secrets=wrong)
+        finally:
+            await runtime.aclose()
+
+        # The results stay hidden, so the step that waits for one times out. Whatever
+        # the message says, it must not say the password.
+        assert "not-it" not in str(caught.value)
+
+    async def test_a_missing_field_never_starts_the_browser(
+        self, site_url: str, chromium_executable: str | None, tmp_path: Path
+    ) -> None:
+        store = LocalArtifactStore(
+            root=tmp_path / "artifacts", clock=FakeClock(), max_file_bytes=10_000_000
+        )
+        runtime = PlaywrightBrowserRuntime(
+            BrowserSettings(executable_path=chromium_executable),  # type: ignore[arg-type]
+            downloads_dir=tmp_path / "downloads",
+        )
+        provider = BrowserDownloadProvider(runtime=runtime, recipe=login_recipe_for(site_url))
+        thin = FormSecrets(service="fixture-site", fields={"username": "eve"})
+
+        try:
+            with (
+                store.reserve(account=ALICE, job_id="live-login", index=0) as sink,
+                pytest.raises(ProviderCredentialMissingError, match="password"),
+            ):
+                await provider.download(query=SEVERANCE, sink=sink, secrets=thin)
+
+            # Nothing was launched: the check happens before the runtime is touched.
+            assert not (tmp_path / "downloads").exists()
+        finally:
+            await runtime.aclose()

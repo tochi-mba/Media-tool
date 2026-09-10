@@ -11,6 +11,17 @@ each one by driving a headless Chromium browser that clicks the download itself.
 asynchronous: submit a batch, get a job id, poll or long-poll for results, then fetch the
 captured files.
 
+It is **multi-tenant**. Several people share one deployment, each with their own assistant.
+media-tool authenticates nobody itself: callers present a token that **keyring** signed, this
+service verifies it locally, and the account comes from that token and from nowhere else. Every
+job, every file, and every limit belongs to one account. When a site needs a login, keyring
+holds it and it is read at the moment it is used.
+
+If you change anything that touches a job, a file, or a credential, read
+[ADR-0008](docs/adr/0008-delegated-identity.md), [ADR-0009](docs/adr/0009-credentials-per-attempt.md)
+and [ADR-0010](docs/adr/0010-account-scoping.md) first. Those three decisions are the ones an
+otherwise reasonable change quietly undoes.
+
 The HTTP surface is designed to be fronted by an **MCP server** later, so an AI assistant
 can call it as tools. That is why route `operation_id`s and descriptions are treated as
 contract, not decoration — see [Invariants](#invariants).
@@ -34,7 +45,8 @@ in a shell chain masks the exit code, which is how a broken commit slips through
 
 ```
 src/media_tool/
-  core/        config, clock, logging, request context, and the composition root
+  core/        config, clock, logging, request context, per-account limits, composition root
+    keyring/     token verification, the keyring HTTP client, credential resolution
   domain/      pure business types: MediaQuery, Job, DownloadArtifact. Imports nothing internal.
   storage/     ArtifactStore port + local filesystem adapter. Where captured files live.
   providers/   DownloadProvider port + adapters
@@ -73,6 +85,23 @@ enforcement deliberately and say why in the commit message — do not work aroun
    directly.
 8. **Unexpected exceptions never reach the client verbatim.** Their text can carry paths or
    credentials. Callers get a request id to quote instead.
+9. **Every store method that reads somebody's data takes an `AccountId`.** Not a string, and
+   not an implicit one from a context variable — a parameter, so the signature says the method
+   behaves differently for different callers. A job carries its own account; a store may never
+   file one under a different account than the job names.
+10. **Cross-account access is `404`, never `403`.** A `403` confirms the resource exists, which
+    is exactly what somebody guessing at ids wants to know. Every new resource needs a test
+    asserting the other account gets a `404`, named for that property.
+11. **The account comes from the caller's token and from nowhere else.** No request body, path
+    or query parameter may name an account. A contract test walks the whole published schema
+    and fails if one ever does.
+12. **Credentials are resolved per attempt and stored nowhere** — not on a job, not in a
+    response, not in a log record. `FormSecrets` and `ResolvedCredential` do not render their
+    values; keep it that way, because the realistic leak is a secret in a local that a
+    traceback prints.
+13. **A `{secret.*}` placeholder may only be typed into a `fill` step's value.** Never a URL, a
+    selector, or a match term. The recipe model rejects it at load, and the rejection is the
+    point: a password in a URL is a password in an access log.
 
 ## How we work: TDD
 
@@ -98,6 +127,13 @@ Some notes earned the hard way in this codebase:
 - **Never sleep in a test.** Inject the clock, the sleeper, and the jitter function, or wait
   on an `asyncio.Event`. A polling loop with a sleep is a slow test today and a flaky one
   next month.
+- **Never race the stub provider.** It finishes a job in microseconds, so a test that submits
+  one and expects it to still be running passes or fails by timing. Seed the state you need
+  through the store instead.
+- **Every test runs authenticated**, against an in-process keyring that signs real RS256
+  tokens (`tests/fakes/keyring.py`). Use the `client` fixture; `anonymous_client` and
+  `other_client` exist for testing refusal and isolation. An endpoint test that quietly ran
+  unauthenticated would stop testing what the endpoint does in production.
 - **If coverage says a line is missed but you can prove it runs**, it is usually the async
   tracer losing the last line of a coroutine or generator. Restructure the code — extracting
   the tail into a named function, or moving a log line before the awaited call — rather than
@@ -122,7 +158,9 @@ The one you will use most, since more APIs are coming.
    wiring step; problem+json, request ids, access logging and versioning are inherited.
 5. Raise domain errors from handlers. Map any new one to a status code in the `_DOMAIN_STATUS`
    table in `api/errors.py` — never build an error response in a handler.
-6. Tests: an integration test per behaviour in `tests/integration/`, and extend the OpenAPI
+6. Take the account as a parameter: `account: AccountDep`. Pass it to every store call. If
+   the route reads a resource, add a test that the other account gets a `404`.
+7. Tests: an integration test per behaviour in `tests/integration/`, and extend the OpenAPI
    contract test with the new `operation_id`.
 
 ## Recipe: add a download provider
@@ -132,11 +170,17 @@ The one you will use most, since more APIs are coming.
 2. Write into `sink.staging_path` and finish with `sink.commit(...)`. Do not touch the
    filesystem yourself — the sink owns hashing, the size ceiling, and the atomic publish.
 3. Raise `ProviderNotFoundError` for a genuine miss (it is deliberately **not** retried),
-   `ProviderTimeoutError` or `ProviderUnavailableError` for anything transient (those are).
-4. Add a value to `ProviderName` in `core/config.py` and an entry to `_BUILDERS` in
+   `ProviderTimeoutError` or `ProviderUnavailableError` for anything transient (those are), and
+   a `ProviderCredentialError` subclass when a login is the problem (never retried — every one
+   of those needs a person to do something).
+4. Implement `requires_login`. Return `None` unless the provider genuinely needs a stored login;
+   returning a service name makes the runner resolve one before every attempt. A provider that
+   needs none must **raise** if handed a credential anyway — being given one it did not ask for
+   is a wiring mistake, and shrugging at it is how a secret ends up somewhere nobody meant.
+5. Add a value to `ProviderName` in `core/config.py` and an entry to `_BUILDERS` in
    `providers/registry.py`. Validate its configuration there so a misconfiguration fails at
    startup, not mid-job.
-5. Tests: a port-conformance test (`checked: DownloadProvider = your_provider`), the happy
+6. Tests: a port-conformance test (`checked: DownloadProvider = your_provider`), the happy
    path, and each error path. If it talks to the outside world, hide that behind a port and
    fake the port.
 
@@ -149,13 +193,17 @@ A recipe is data — no code changes needed to support a new site.
    (`{query}`, `{name}`, `{episode_tag}`, `{year}`).
 2. Find selectors by opening the site with `headless=False`
    (`MEDIA_TOOL_BROWSER__HEADLESS=false`) and using the browser's inspector.
-3. Set `result_selector` and `match.text_contains` so the right result is *identified*
+3. If the site needs a login, declare it — `"login": {"service": "<keyring service name>"}` —
+   and type the values with `{secret.username}`, `{secret.password}`, or any other field name
+   stored for that service. They may appear only in a `fill` step's `value`; anywhere else is
+   rejected at load. A recipe must declare the login it types and type the login it declares.
+4. Set `result_selector` and `match.text_contains` so the right result is *identified*
    before anything is clicked. Getting this wrong means downloading the wrong file and
    reporting success, which is worse than failing.
-4. `download_trigger` is the click a human would make.
-5. Test it without hitting the site: add a page to `tests/live/site/` and a case to
+5. `download_trigger` is the click a human would make.
+6. Test it without hitting the site: add a page to `tests/live/site/` and a case to
    `tests/live/`, or unit-test it against `FakePage` in `tests/fakes/browser.py`.
-6. Run it: `MEDIA_TOOL_PROVIDER=browser MEDIA_TOOL_RECIPE_PATH=recipes/yours.json make run`.
+7. Run it: `MEDIA_TOOL_PROVIDER=browser MEDIA_TOOL_RECIPE_PATH=recipes/yours.json make run`.
 
 ## Environment gotchas
 
@@ -184,5 +232,8 @@ lack is your reasoning.
 - [ ] New behaviour is covered by a test named after the behaviour.
 - [ ] Public HTTP changes: `operation_id`s stable, descriptions written for a model to read,
       contract test updated.
+- [ ] Anything touching a job, a file, or a credential: the account is a parameter, the
+      cross-account case has a test that expects `404`, and no secret is reachable from a
+      stored record, a response, or a log line.
 - [ ] Docs updated — this file for workflow, `docs/` for design, an ADR for a decision that
       future-you would otherwise re-litigate.

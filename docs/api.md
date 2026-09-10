@@ -14,10 +14,38 @@ so they are never renamed casually. See [docs/mcp.md](mcp.md).
 | `cancel_download_job` | `DELETE /v1/downloads/{job_id}` |
 | `fetch_download_file` | `GET /v1/downloads/{job_id}/items/{index}/file` |
 
+## Authentication
+
+Every route except `GET /healthy` needs a bearer token that keyring signed for this service:
+
+```
+Authorization: Bearer <token from keyring, audience "media-tool">
+```
+
+Your assistant gets one by asking keyring for a service token with
+`{"audience": "media-tool"}`. media-tool verifies it locally against keyring's published
+keys — there is no round trip per request — and takes your account from it.
+
+**The account comes from the token and from nowhere else.** No field, path or query parameter
+names an account; there is no request you can make for somebody else's work. Everything you
+submit, every file it produces, and every limit you are held to is yours alone.
+
+| Response | Means |
+| --- | --- |
+| `401` | No token, or one this service will not accept. It does not say which check failed. |
+| `403` | Never sent. Somebody else's job answers `404`, exactly like one that does not exist. |
+| `429` | A per-account limit. The detail names which; `Retry-After` says how long to wait. |
+| `503` | keyring could not be reached. Your token is probably fine; try again shortly. |
+
+Tokens are short-lived — fifteen minutes by default. That is longer than most jobs and shorter
+than some; see [Logins](#logins-for-sites-that-need-one) for what happens when a job outlives
+one.
+
 ## Submitting a batch
 
 ```bash
 curl -sS -X POST localhost:8000/v1/downloads \
+  -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"items": [{"name": "Severance", "season": 1, "episode": 3},
                  {"name": "Dune", "year": 2021}]}'
@@ -44,6 +72,32 @@ curl -sS -X POST localhost:8000/v1/downloads \
   `"  the   WIRE "` and `"The Wire"` are the same request.
 - Unknown fields are rejected rather than ignored, so an invented parameter fails loudly.
 - At most `MEDIA_TOOL_MAX_ITEMS_PER_REQUEST` (default 50) items per request.
+
+### Logins for sites that need one
+
+Some sites will not hand over a file without a login. Those are stored in keyring, not here,
+and are read at the moment they are needed:
+
+```json
+{ "items": [{"name": "Dune", "year": 2021}], "profile": "default" }
+```
+
+`profile` names one of *your* credential profiles in keyring. It is optional — omit it and
+`MEDIA_TOOL_DEFAULT_PROFILE` is used. It never names an account: whose credentials these are
+comes from your token, so there is no profile name that reaches somebody else's.
+
+Nothing about a credential comes back. It is resolved per attempt, typed into the site's form,
+and held nowhere — not on the job, not in a response, not in a log record. See
+[ADR-0009](adr/0009-credentials-per-attempt.md).
+
+Two item-level failures are specific to this and worth handling distinctly:
+
+| `error.code` | Means | What fixes it |
+| --- | --- | --- |
+| `reauthenticate` | Your token expired while the job was still running. | Sign in again and resubmit. |
+| `credential_missing` | No stored login for that site on that profile, or one missing a field the site needs. | Connect the account in keyring, or add the missing field. |
+
+Neither is retried — asking again with the same expired token cannot succeed.
 
 ### Duplicates
 

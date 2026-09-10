@@ -53,6 +53,36 @@ A fake must also **reject what the real thing rejects**. Ours did not, and accep
 green unit tests and was caught by the first live run. `FakeBrowser.new_context` now validates
 its keyword arguments the way the driver does.
 
+`FakeKeyring` follows the same rule and is the most important instance of it. It signs real
+RS256 tokens with a real generated key, serves a real JWKS, and answers the internal endpoints
+exactly as strictly as keyring does: both credentials or nothing, the account taken from the
+user's token and from nowhere else, `404` rather than an empty answer when there is no such
+credential. A fake more permissive than the real service would let this code depend on
+something keyring refuses in production — and the whole isolation story rests on that contract.
+
+## Everything runs authenticated
+
+The `client` fixture carries a valid token, so every endpoint test exercises the path the
+endpoint actually takes in production. `anonymous_client` and `other_client` exist for the two
+cases that need something else: testing refusal, and testing that one account cannot reach
+another's work.
+
+`tests/integration/test_isolation.py` is its own file on purpose. Isolation bugs are silent —
+nothing about the service's behaviour reveals one — so each test is named for the property it
+holds rather than the code that holds it, and a refactor that breaks the property breaks a test
+whose name says what was lost. One of them asserts the refusal is a `404` and **not** a `403`,
+because `403` is the intuitive answer and the wrong one.
+
+Two more sit in the contract test: nothing in the published schema may name an account, and no
+operation id may contain `secret`, `credential`, `password` or `token`. Both exist to fail if
+somebody later adds the obvious convenience.
+
+## Nothing races the stub
+
+The stub provider finishes a job in microseconds. A test that submits one and expects it to
+still be running passes or fails by timing rather than by the rule it checks — so tests that
+need work in flight seed it through the store instead of submitting it.
+
 ## The live browser tests
 
 They drive real Chromium against a fixture site served from `127.0.0.1` on a random port by a

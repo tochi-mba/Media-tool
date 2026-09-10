@@ -20,6 +20,11 @@ verbatim as the tool name:
 A contract test in `tests/integration/test_downloads.py` pins this exact set and fails if a
 description goes missing, so tool names cannot drift silently.
 
+There is no tool for reading a credential, and there must never be one. keyring's form-secrets
+endpoint is the only place credential material is returned anywhere in this system; media-tool
+consumes it and does not re-expose it. The same contract test asserts no operation id contains
+`secret`, `credential`, `password` or `token`.
+
 **Descriptions written for a model.** Route `summary` and `description` say when to use the
 operation and what comes back, not just what it is called. Field descriptions carry the rules
 a model cannot infer — that `season: 0` means specials, that `episode` may be given without a
@@ -37,7 +42,13 @@ either poll too fast or give up too early.
 job view stays a predictable size in a context window.
 
 **One error shape.** Every failure is problem+json with a stable `type`, and item failures
-carry a stable `code` (`not_found`, `timeout`, …) rather than prose to be parsed.
+carry a stable `code` (`not_found`, `timeout`, `reauthenticate`, `credential_missing`, …)
+rather than prose to be parsed. `429` carries `Retry-After`, so a model has an interval to obey
+instead of a retry loop to invent.
+
+**Per-caller identity, already.** Every `/v1` route takes the caller's keyring token and works
+only on that account's jobs and files. The MCP server does not have to implement any of that —
+it has to *forward the token*, and nothing else.
 
 ## Building the server
 
@@ -63,8 +74,13 @@ returns a `links.file` path per item for exactly this.
 - **No idempotency key.** Assistants retry. A retried `create_download_job` currently creates
   a second job. Deduplication within a request is handled, but across requests is not — an
   `Idempotency-Key` header mapping to an existing job id is the obvious fix.
-- **No authentication.** The service drives a browser and writes files. Do not expose it
-  beyond localhost or a trusted network without putting auth in front of it. See
-  [operations.md](operations.md).
+- **Each person's token has to reach the tool call.** The MCP server must forward the caller's
+  own keyring token as `Authorization: Bearer …`, not a token of its own. Everything about
+  isolation rests on it: a server that used one shared token would make everyone the same
+  account. If your bridge cannot carry a per-caller header, that is the thing to fix before
+  anything else.
+- **Tokens expire in fifteen minutes.** An assistant holding one across a long conversation
+  will find it stale. Mint one per burst of work rather than at session start; an item that
+  fails with `reauthenticate` is telling you exactly this.
 - **Jobs are in-memory.** A restart loses them, so an assistant holding a job id from before
   a deploy gets a `404`. [ADR-0003](adr/0003-in-memory-job-store.md) has the swap plan.

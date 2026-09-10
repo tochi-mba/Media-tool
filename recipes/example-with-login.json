@@ -1,0 +1,20 @@
+{
+  "name": "example-with-login",
+  "start_url": "{base_url}/search?q={query}",
+  "login": { "service": "example-site" },
+  "steps": [
+    { "action": "wait_for", "selector": "form#signin" },
+    { "action": "fill", "selector": "input[name=username]", "value": "{secret.username}" },
+    { "action": "fill", "selector": "input[name=password]", "value": "{secret.password}" },
+    { "action": "click", "selector": "form#signin button[type=submit]" },
+    { "action": "wait_for", "selector": ".result" }
+  ],
+  "result_selector": ".result",
+  "match": {
+    "text_contains": ["{name}", "{episode_tag}"]
+  },
+  "download_trigger": {
+    "action": "click",
+    "selector": ".result a.download"
+  }
+}

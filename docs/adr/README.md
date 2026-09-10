@@ -12,3 +12,6 @@ decided, what it cost, and what would justify changing it.
 | [0005](0005-recipe-driven-sites.md) | Sites described by data, not code | Accepted |
 | [0006](0006-two-phase-artifact-storage.md) | Two-phase artifact storage | Accepted |
 | [0007](0007-api-conventions.md) | API conventions, and operation ids as public contract | Accepted |
+| [0008](0008-delegated-identity.md) | Identity is delegated to keyring, and verified locally | Accepted |
+| [0009](0009-credentials-per-attempt.md) | Credentials are resolved per attempt, never stored on a job | Accepted |
+| [0010](0010-account-scoping.md) | Isolation is structural, and cross-account access is a 404 | Accepted |

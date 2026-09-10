@@ -101,6 +101,16 @@ class TestLoading:
 
         assert recipe.result_selector == ".result"
 
+    def test_the_shipped_login_recipe_is_valid(self) -> None:
+        # The other worked example, and the one with rules to get wrong: it must declare
+        # the login it types, and put the values nowhere but a form field.
+        from pathlib import Path as _Path
+
+        recipe = SiteRecipe.load(_Path("recipes/example-with-login.json"))
+
+        assert recipe.login is not None
+        assert recipe.login.service == "example-site"
+
 
 class TestPlaceholders:
     def test_a_series_supplies_every_placeholder(self) -> None:

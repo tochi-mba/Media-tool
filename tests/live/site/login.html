@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fixture sign-in</title>
+<h1>Sign in</h1>
+
+<form id="signin" onsubmit="return signIn(event)">
+  <input name="username" id="user" autocomplete="off">
+  <input name="password" id="pass" type="password" autocomplete="off">
+  <button type="submit">Sign in</button>
+</form>
+
+<div id="results" hidden>
+  <div class="result">
+    <span class="title">Severance S01E03 1080p</span>
+    <a class="download" href="/files/severance.s01e03.bin">Download</a>
+  </div>
+</div>
+
+<script>
+  // The point of the fixture: results only exist once the right values were typed in.
+  // A recipe that failed to fill the form finds nothing to click, exactly as on a real
+  // walled-garden site.
+  function signIn(event) {
+    event.preventDefault();
+    const user = document.getElementById("user").value;
+    const pass = document.getElementById("pass").value;
+    if (user === "eve" && pass === "hunter2") {
+      document.getElementById("results").hidden = false;
+    }
+    return false;
+  }
+</script>
