@@ -109,6 +109,13 @@ ignore = [
 # Pydantic resolves model field annotations at runtime to build validators and the
 # JSON schema, so the types they name must be imported at runtime too.
 "src/media_tool/api/schemas/*" = ["TC001", "TC002", "TC003"]
+# The browser port mirrors Playwright's own per-call timeouts, which is exactly the
+# shape ASYNC109 discourages -- but wrapping each call in asyncio.timeout would fight
+# the driver's own cancellation rather than cooperate with it.
+"src/media_tool/providers/browser/*" = ["ASYNC109"]
+# A fake exists to be substitutable for the real thing, so it mirrors the real
+# signatures exactly -- unused parameters, timeout arguments, blocking calls and all.
+"tests/fakes/*" = ["ASYNC109", "ASYNC240", "ARG002"]
 "tests/**" = [
     "S101",    # asserts are the point
     "SLF001",  # tests may inspect private state
