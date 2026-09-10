@@ -13,6 +13,7 @@ path build rather than a search.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import unicodedata
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from media_tool.domain.artifacts import DownloadArtifact
+from media_tool.domain.artifacts import DEFAULT_CONTENT_TYPE, DownloadArtifact
 from media_tool.domain.errors import ArtifactNotFoundError, ArtifactTooLargeError
 from media_tool.storage.base import StorageHealth
 
@@ -39,6 +40,9 @@ MAX_FILENAME_BYTES = 255
 """The limit on every filesystem worth supporting."""
 
 STAGING_DIR_NAME = ".staging"
+DEDUPLICATED_SOURCE = "deduplicated://same-request"
+"""Source recorded for an item satisfied by another item's download."""
+
 HASH_CHUNK_BYTES = 1024 * 1024
 
 _SEPARATORS = re.compile(r"[/\\]")
@@ -184,6 +188,33 @@ class LocalArtifactStore:
 
         return candidate
 
+    def link_artifact(
+        self, *, job_id: str, source_index: int, target_index: int, filename: str
+    ) -> DownloadArtifact:
+        """Make an already-stored artifact available under a second item index.
+
+        Deduplication means one download can satisfy several submitted items. Rather
+        than teach the API that some items borrow another item's file, each index gets
+        its own path -- via a hard link, so a multi-gigabyte file is not duplicated on
+        disk.
+
+        Raises:
+            ArtifactNotFoundError: if the source artifact is missing.
+        """
+        source = self.locate(job_id=job_id, index=source_index, filename=filename)
+        destination_dir = self.root / job_id / str(target_index)
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination = destination_dir / filename
+
+        destination.unlink(missing_ok=True)
+        try:
+            os.link(source, destination)
+        except OSError:
+            # Filesystems without hard-link support, or a cross-device root.
+            shutil.copy2(source, destination)
+
+        return _artifact_for(source, filename=filename, clock=self._clock)
+
     def purge_job(self, job_id: str) -> bool:
         """Delete one job's artifacts. Returns whether there was anything to delete.
 
@@ -238,6 +269,19 @@ class LocalArtifactStore:
             free_bytes = 0
 
         return StorageHealth(writable=writable, free_bytes=free_bytes)
+
+
+def _artifact_for(path: Path, *, filename: str, clock: Clock) -> DownloadArtifact:
+    """Describe an already-stored file. Used when one download satisfies several items."""
+    return DownloadArtifact(
+        filename=filename,
+        size_bytes=path.stat().st_size,
+        content_type=DEFAULT_CONTENT_TYPE,
+        sha256=_sha256(path),
+        source_url=DEDUPLICATED_SOURCE,
+        duration_seconds=0.0,
+        downloaded_at=clock.now(),
+    )
 
 
 def _modified_at(path: Path) -> datetime:

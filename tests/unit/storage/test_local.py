@@ -263,6 +263,68 @@ def age(path: Path, seconds: float) -> None:
     os.utime(path, (stamp, stamp))
 
 
+class TestLinking:
+    """One download can satisfy several submitted items."""
+
+    def test_a_linked_artifact_is_readable_at_the_new_index(
+        self, store: LocalArtifactStore
+    ) -> None:
+        original = stage(store)
+
+        linked = store.link_artifact(
+            job_id="job1", source_index=0, target_index=2, filename=original.filename
+        )
+
+        located = store.locate(job_id="job1", index=2, filename=linked.filename)
+        assert located.read_bytes() == PAYLOAD
+        assert linked.sha256 == original.sha256
+
+    def test_linking_does_not_duplicate_the_bytes(self, store: LocalArtifactStore) -> None:
+        original = stage(store)
+
+        store.link_artifact(
+            job_id="job1", source_index=0, target_index=2, filename=original.filename
+        )
+
+        source = store.locate(job_id="job1", index=0, filename=original.filename)
+        target = store.locate(job_id="job1", index=2, filename=original.filename)
+        assert source.stat().st_ino == target.stat().st_ino
+
+    def test_it_falls_back_to_copying_where_hard_links_are_unavailable(
+        self, store: LocalArtifactStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original = stage(store)
+
+        def no_links(*_args: object, **_kwargs: object) -> None:
+            raise OSError(18, "Invalid cross-device link")
+
+        monkeypatch.setattr(os, "link", no_links)
+
+        linked = store.link_artifact(
+            job_id="job1", source_index=0, target_index=2, filename=original.filename
+        )
+
+        located = store.locate(job_id="job1", index=2, filename=linked.filename)
+        assert located.read_bytes() == PAYLOAD
+
+    def test_linking_a_missing_artifact_is_not_found(self, store: LocalArtifactStore) -> None:
+        with pytest.raises(ArtifactNotFoundError):
+            store.link_artifact(
+                job_id="job1", source_index=0, target_index=1, filename="absent.bin"
+            )
+
+    def test_relinking_over_an_existing_file_replaces_it(self, store: LocalArtifactStore) -> None:
+        original = stage(store)
+        stage(store, payload=b"different", suggested_filename=original.filename, index=2)
+
+        store.link_artifact(
+            job_id="job1", source_index=0, target_index=2, filename=original.filename
+        )
+
+        located = store.locate(job_id="job1", index=2, filename=original.filename)
+        assert located.read_bytes() == PAYLOAD
+
+
 class TestPurgeJob:
     """The normal retention path: driven by the job store, which knows the clock."""
 

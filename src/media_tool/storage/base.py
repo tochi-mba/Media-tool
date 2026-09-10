@@ -76,6 +76,12 @@ class ArtifactStore(Protocol):
         """
         ...
 
+    def link_artifact(
+        self, *, job_id: str, source_index: int, target_index: int, filename: str
+    ) -> DownloadArtifact:
+        """Expose an already-stored artifact under a second item index."""
+        ...
+
     def purge_job(self, job_id: str) -> bool:
         """Delete one job's artifacts. Returns whether there was anything to delete."""
         ...
