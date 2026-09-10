@@ -43,6 +43,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     "ruff>=0.6",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [build-system]
@@ -101,10 +102,31 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# FastAPI resolves handler annotations at runtime to build the dependency graph and the
+# OpenAPI schema, so its type-only-looking imports must stay importable at runtime.
+"src/media_tool/api/routers/*" = ["TC001", "TC002", "TC003"]
+"src/media_tool/api/dependencies.py" = ["TC001", "TC002", "TC003"]
+# Pydantic resolves model field annotations at runtime to build validators and the
+# JSON schema, so the types they name must be imported at runtime too.
+"src/media_tool/api/schemas/*" = ["TC001", "TC002", "TC003"]
+# The browser port mirrors Playwright's own per-call timeouts, which is exactly the
+# shape ASYNC109 discourages -- but wrapping each call in asyncio.timeout would fight
+# the driver's own cancellation rather than cooperate with it.
+"src/media_tool/providers/browser/*" = ["ASYNC109"]
+"src/media_tool/providers/browser/recipes.py" = ["ASYNC109", "TC001", "TC003"]
+# A fake exists to be substitutable for the real thing, so it mirrors the real
+# signatures exactly -- unused parameters, timeout arguments, blocking calls and all.
+"tests/fakes/*" = ["ASYNC109", "ASYNC240", "ARG002"]
 "tests/**" = [
     "S101",    # asserts are the point
     "SLF001",  # tests may inspect private state
     "PLR2004", # magic numbers are fine in assertions
+    "PLR0913", # helpers that mirror a wide API legitimately take many arguments
+    "TC001",   # fixtures are annotated with the types they are, not deferred strings
+    "TC002",
+    "TC003",
+    "PLC0415", # a local import inside one test keeps its setup next to its assertion
+    "S104",    # asserting on "0.0.0.0" is not binding to it
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -170,6 +192,7 @@ exclude_also = [
     "^\\s*if TYPE_CHECKING:",
     "^\\s*@(?:typing\\.)?overload$",
     "^\\s*raise NotImplementedError$",
+    "^\\s*if __name__ == .__main__.:$",
 ]
 
 # --------------------------------------------------------------------------------------
@@ -212,8 +235,14 @@ source_modules = [
     "media_tool.domain",
     "media_tool.jobs",
     "media_tool.storage",
+    "media_tool.providers.base",
+    "media_tool.providers.stub",
+    "media_tool.providers.registry",
 ]
 forbidden_modules = ["playwright"]
+# The registry constructs the browser adapter, so it imports that module -- but it
+# still must not reach Playwright itself, which is what this asserts.
+allow_indirect_imports = true
 # Every non-browser provider module is added to this list as it is created.
 # media_tool.providers.browser is deliberately never listed: it is the single
 # adapter allowed to import Playwright.
