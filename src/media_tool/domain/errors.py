@@ -37,3 +37,30 @@ class ArtifactNotFoundError(DomainError):
 
 class ArtifactTooLargeError(DomainError):
     """A download exceeded the configured size ceiling and was discarded."""
+
+
+class InvalidAccountIdError(DomainError, ValueError):
+    """An account identifier is not one this service is willing to use.
+
+    It becomes a directory name and a log field, so the rules are about what is safe to
+    write down rather than about what keyring happens to issue.
+    """
+
+
+class AuthenticationError(DomainError):
+    """A request could not be attributed to an account.
+
+    Deliberately carries one message for every cause. Which check failed -- expiry,
+    audience, signature -- is nobody's business, and a distinct message per failure is a
+    probe for what an acceptable token looks like.
+    """
+
+
+class KeyringUnavailableError(DomainError):
+    """Keyring could not be reached, so identity could not be established.
+
+    Kept separate from :class:`AuthenticationError` on purpose: a caller holding a
+    perfectly good token must not be told their token is bad because a dependency is
+    down. One is a 401, the other a 503, and conflating them makes an outage
+    undiagnosable from the outside.
+    """
