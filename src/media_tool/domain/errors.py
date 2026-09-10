@@ -64,3 +64,30 @@ class KeyringUnavailableError(DomainError):
     down. One is a 401, the other a 503, and conflating them makes an outage
     undiagnosable from the outside.
     """
+
+
+class KeyringRejectedError(DomainError):
+    """Keyring refused a call this service made on somebody's behalf.
+
+    The transport's faithful report of a 401 and nothing more. Keyring answers 401 both
+    for a service token it does not recognise and for a user token it will not accept,
+    and the wire does not distinguish them -- so the interpretation happens here, where
+    this service knows whether the user token it forwarded was still good.
+    """
+
+
+class ReauthenticationRequiredError(DomainError):
+    """The person's token expired while their work was still running.
+
+    User tokens are short-lived by design and a download can outlast one. This is a
+    distinct, actionable outcome -- "log in again and resubmit" -- rather than a generic
+    provider failure, because the two need entirely different things from the caller.
+    """
+
+
+class CredentialNotFoundError(DomainError):
+    """Keyring holds no credential for that profile and service.
+
+    Not a failure of authentication: the caller is who they say they are and simply has
+    not connected that account yet.
+    """

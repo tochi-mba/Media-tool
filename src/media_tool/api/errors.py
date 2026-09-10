@@ -21,11 +21,14 @@ from media_tool.domain.errors import (
     ArtifactNotFoundError,
     ArtifactTooLargeError,
     AuthenticationError,
+    CredentialNotFoundError,
     InvalidJobTransitionError,
     InvalidMediaQueryError,
     JobItemNotFoundError,
     JobNotFoundError,
+    KeyringRejectedError,
     KeyringUnavailableError,
+    ReauthenticationRequiredError,
 )
 
 if TYPE_CHECKING:
@@ -63,7 +66,12 @@ _DOMAIN_STATUS = {
     InvalidMediaQueryError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ArtifactTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     AuthenticationError: status.HTTP_401_UNAUTHORIZED,
+    ReauthenticationRequiredError: status.HTTP_401_UNAUTHORIZED,
+    CredentialNotFoundError: status.HTTP_404_NOT_FOUND,
     KeyringUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    # Keyring refusing this service is a misconfiguration of this service, so it is not
+    # usable rather than the caller being unwelcome.
+    KeyringRejectedError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

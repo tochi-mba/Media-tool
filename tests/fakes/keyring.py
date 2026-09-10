@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,6 +29,8 @@ from tests.fakes.accounts import ACCOUNT_ID
 
 ALGORITHM = "RS256"
 ISSUER = "https://keyring.test"
+CREDENTIALS_PREFIX = "/v1/internal/credentials/"
+FORM_SECRETS_PREFIX = "/v1/internal/form-secrets/"
 AUDIENCE = "media-tool"
 SERVICE_TOKEN = "service-token-for-media-tool"  # noqa: S105 - a fixture, not a credential
 
@@ -86,6 +89,23 @@ class FakeKeyringSigner:
             headers=_merged({"kid": key_id or self.key_id}, headers),
         )
 
+    def verify(self, token: str, *, audience: str = AUDIENCE) -> str:
+        """Check a token this signer issued and return its subject.
+
+        Keyring's own signer does exactly this, for exactly this reason: a service
+        presents a user token back at the internal endpoints, and keyring has to decide
+        whose it is.
+        """
+        claims = jwt.decode(
+            token,
+            self._key.public_key(),
+            algorithms=[ALGORITHM],
+            issuer=self.issuer,
+            audience=audience,
+            options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+        )
+        return str(claims["sub"])
+
     def jwks(self) -> dict[str, Any]:
         """The public key in the form a verifier expects."""
         numbers = self._key.public_key().public_numbers()
@@ -133,7 +153,37 @@ class FakeKeyring:
         self.unreachable = False
         """Set to simulate an outage: every request raises, as a dead host does."""
 
+        self.credentials: dict[tuple[str, str, str], dict[str, Any]] = {}
+        """(account, profile, service) -> what to attach. Keyed by account on purpose."""
+
+        self.form_secrets: dict[tuple[str, str, str], dict[str, str]] = {}
+        """(account, profile, service) -> the values a login form needs."""
+
+        self.seen_user_tokens: list[str] = []
+        """Every user token forwarded to an internal endpoint, in order."""
+
         self.transport = httpx.MockTransport(self._handle)
+
+    def connect(
+        self,
+        *,
+        account_id: str = ACCOUNT_ID,
+        profile: str = "default",
+        service: str = "somesite",
+        headers: dict[str, str] | None = None,
+        query_params: dict[str, str] | None = None,
+        expires_at: str | None = None,
+        fields: dict[str, str] | None = None,
+    ) -> None:
+        """Give an account a credential, the way redeeming a connection would."""
+        key = (account_id, profile, service)
+        self.credentials[key] = {
+            "service": service,
+            "headers": headers if headers is not None else {"Authorization": "Bearer stored"},
+            "query_params": query_params or {},
+            "expires_at": expires_at,
+        }
+        self.form_secrets[key] = fields or {"username": "somebody", "password": "hunter2"}
 
     def token_for(self, account_id: str = ACCOUNT_ID, **overrides: Any) -> str:
         """Mint a user token for ``account_id``, as keyring's service-token endpoint would."""
@@ -152,4 +202,51 @@ class FakeKeyring:
             self.jwks_requests += 1
             return httpx.Response(200, json=self.signer.jwks())
 
+        if request.url.path.startswith(CREDENTIALS_PREFIX):
+            return self._resolve(request, CREDENTIALS_PREFIX, self.credentials, _as_credential)
+        if request.url.path.startswith(FORM_SECRETS_PREFIX):
+            return self._resolve(request, FORM_SECRETS_PREFIX, self.form_secrets, _as_fields)
+
         return httpx.Response(404, json={"detail": "no such endpoint"})
+
+    def _resolve(
+        self,
+        request: httpx.Request,
+        prefix: str,
+        store: dict[tuple[str, str, str], Any],
+        shape: Callable[[str, Any], dict[str, Any]],
+    ) -> httpx.Response:
+        """Answer an internal endpoint exactly as strictly as keyring answers it.
+
+        Both credentials or nothing, the account taken from the user's token and from
+        nowhere else, and a 404 -- not an empty answer -- when there is no such
+        credential. A fake that were more permissive than the real service would let a
+        caller depend on something keyring will refuse in production.
+        """
+        if request.headers.get("Authorization") != f"Bearer {self.service_token}":
+            return httpx.Response(401, json={"detail": "service credentials were not accepted"})
+
+        user_token = request.headers.get("X-Keyring-User-Token")
+        if user_token is None:
+            return httpx.Response(401, json={"detail": "the user token was not accepted"})
+        self.seen_user_tokens.append(user_token)
+
+        try:
+            account_id = self.signer.verify(user_token)
+        except jwt.PyJWTError:
+            return httpx.Response(401, json={"detail": "the user token was not accepted"})
+
+        profile, _, service = request.url.path[len(prefix) :].partition("/")
+        found = store.get((account_id, profile, service))
+        if found is None:
+            return httpx.Response(404, json={"detail": "no such credential"})
+
+        return httpx.Response(200, json=shape(service, found))
+
+
+def _as_credential(_service: str, stored: dict[str, Any]) -> dict[str, Any]:
+    return stored
+
+
+def _as_fields(service: str, stored: dict[str, str]) -> dict[str, Any]:
+    return {"service": service, "fields": stored}
