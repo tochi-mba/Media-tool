@@ -106,6 +106,9 @@ ignore = [
 # OpenAPI schema, so its type-only-looking imports must stay importable at runtime.
 "src/media_tool/api/routers/*" = ["TC001", "TC002", "TC003"]
 "src/media_tool/api/dependencies.py" = ["TC001", "TC002", "TC003"]
+# Pydantic resolves model field annotations at runtime to build validators and the
+# JSON schema, so the types they name must be imported at runtime too.
+"src/media_tool/api/schemas/*" = ["TC001", "TC002", "TC003"]
 "tests/**" = [
     "S101",    # asserts are the point
     "SLF001",  # tests may inspect private state

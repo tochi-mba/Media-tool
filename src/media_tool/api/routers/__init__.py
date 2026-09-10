@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from media_tool.api.routers import health
+from media_tool.api.routers import downloads, health
 
 if TYPE_CHECKING:
     from fastapi import APIRouter
 
-ROUTERS: tuple[APIRouter, ...] = (health.router,)
+ROUTERS: tuple[APIRouter, ...] = (health.router, downloads.router)
 """Every router the application serves, in the order they are mounted."""
 
 __all__ = ["ROUTERS"]
