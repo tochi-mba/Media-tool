@@ -100,6 +100,22 @@ class TokenVerifier:
             # refused in the same words as every other bad token.
             raise AuthenticationError(BAD_TOKEN) from error
 
+    async def usable(self) -> bool:
+        """Whether this verifier currently holds keys it could verify a token with.
+
+        Answered from the cache when the cache is fresh, so a health probe on a timer
+        costs one fetch per cache period rather than one per probe.
+
+        True while keyring is down but its keys are still cached, which is the honest
+        answer: tokens really can still be verified. Only a cold start against an
+        unreachable keyring is a no.
+        """
+        try:
+            await self._current_keys()
+        except KeyringUnavailableError:
+            return False
+        return True
+
     def _reject_if_expired(self, claims: dict[str, Any]) -> None:
         """Check ``exp`` against the injected clock rather than PyJWT's.
 

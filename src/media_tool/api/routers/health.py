@@ -19,10 +19,10 @@ STATUS_DEGRADED = "degraded"
     operation_id="get_health",
     summary="Report service health",
     description=(
-        "Returns the service version, uptime, and the state of every dependency: the "
-        "job store, the download provider, and artifact storage. Responds 200 when "
-        "everything is usable and 503 when any check fails, with the same body shape "
-        "either way."
+        "Returns the service version, uptime, and the state of every dependency: "
+        "identity, the job store, the download provider, and artifact storage. "
+        "Responds 200 when everything is usable and 503 when any check fails, with the "
+        "same body shape either way."
     ),
     response_model=HealthResponse,
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": HealthResponse}},
@@ -31,8 +31,17 @@ async def get_health(container: ContainerDep, response: Response) -> HealthRespo
     """Check every dependency and summarize."""
     storage = container.artifacts.health()
     provider_ready = await container.provider.healthy()
+    identity_ready = await container.authenticator.healthy()
 
     checks = {
+        "identity": CheckResult(
+            # Degraded, not failed, is not a distinction this endpoint makes: an
+            # instance that cannot say who anybody is cannot serve a single /v1 request,
+            # so it should be taken out of rotation rather than left to answer 503s one
+            # at a time.
+            status=STATUS_OK if identity_ready else STATUS_DEGRADED,
+            detail={"mode": container.authenticator.describes, "ready": identity_ready},
+        ),
         "job_store": CheckResult(
             status=STATUS_OK,
             detail={"jobs": await container.jobs.count()},

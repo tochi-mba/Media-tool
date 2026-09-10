@@ -398,3 +398,53 @@ class TestContract:
 
         request_schema = schema["components"]["schemas"]["CreateDownloadJobRequest"]
         assert request_schema["examples"]
+
+    async def test_the_profile_field_is_documented_as_optional(self, client: AsyncClient) -> None:
+        # A model calling this as a tool decides from the schema alone whether it has to
+        # ask the person for a profile. It does not.
+        schema = (await client.get("/openapi.json")).json()
+
+        request_schema = schema["components"]["schemas"]["CreateDownloadJobRequest"]
+        assert "profile" not in request_schema.get("required", [])
+        assert len(request_schema["properties"]["profile"]["description"]) > 40
+
+    async def test_the_schema_never_offers_a_way_to_name_an_account(
+        self, client: AsyncClient
+    ) -> None:
+        # The account comes from the token and from nowhere else. A field that named one
+        # would be a field a caller could put somebody else's name in, and the published
+        # schema is where such a field would first become reachable.
+        schema = (await client.get("/openapi.json")).json()
+
+        for model in schema["components"]["schemas"].values():
+            assert "account" not in model.get("properties", {})
+            assert "account_id" not in model.get("properties", {})
+
+        for path, operations in schema["paths"].items():
+            for operation in operations.values():
+                names = {parameter["name"] for parameter in operation.get("parameters", [])}
+                assert not names & {"account", "account_id"}, path
+
+    async def test_reading_a_credential_is_not_a_tool(self, client: AsyncClient) -> None:
+        # Keyring's form-secrets endpoint is the one place credential material is
+        # returned anywhere in this system. Nothing here proxies it, and this is the
+        # test that says an operation doing so must never be added.
+        schema = (await client.get("/openapi.json")).json()
+
+        operation_ids = {
+            operation["operationId"]
+            for path in schema["paths"].values()
+            for operation in path.values()
+        }
+        assert not any(
+            word in operation_id
+            for operation_id in operation_ids
+            for word in ("secret", "credential", "password", "token")
+        )
+
+    async def test_the_quota_refusal_is_documented_where_it_can_happen(
+        self, client: AsyncClient
+    ) -> None:
+        schema = (await client.get("/openapi.json")).json()
+
+        assert "429" in schema["paths"]["/v1/downloads"]["post"]["responses"]

@@ -246,12 +246,31 @@ class TestKeyringDown:
 
         assert response.status_code == 503
 
-    async def test_health_still_answers_while_keyring_is_down(
+    async def test_health_reports_the_outage_rather_than_hiding_it(
         self, anonymous_client: AsyncClient, keyring: FakeKeyring
     ) -> None:
+        # An instance that has never read keyring's keys cannot attribute a single
+        # request, so it should be taken out of rotation rather than left answering 503s
+        # one at a time. The body is the same shape either way.
         keyring.unreachable = True
 
-        assert (await anonymous_client.get("/healthy")).status_code == 200
+        response = await anonymous_client.get("/healthy")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["identity"]["detail"]["ready"] is False
+
+    async def test_cached_keys_keep_the_service_healthy_through_an_outage(
+        self, client: AsyncClient, keyring: FakeKeyring
+    ) -> None:
+        # Once the keys are in hand, tokens really can still be verified -- so saying
+        # "unhealthy" would be taking a working instance out of service.
+        await client.post("/v1/downloads", json={"items": [{"name": "Dune"}]})
+        keyring.unreachable = True
+
+        response = await client.get("/healthy")
+
+        assert response.status_code == 200
+        assert response.json()["checks"]["identity"]["detail"]["ready"] is True
 
 
 class TestAuthenticationDisabled:

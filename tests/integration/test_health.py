@@ -35,8 +35,15 @@ class TestHealthy:
     async def test_every_dependency_is_reported(self, client: AsyncClient) -> None:
         checks = (await client.get("/healthy")).json()["checks"]
 
-        assert set(checks) == {"job_store", "provider", "storage"}
+        assert set(checks) == {"identity", "job_store", "provider", "storage"}
         assert all(check["status"] == "ok" for check in checks.values())
+
+    async def test_it_says_how_callers_are_identified(self, client: AsyncClient) -> None:
+        # Whether an instance authenticates anybody is the first thing to know about it,
+        # and the last thing that should have to be inferred from behaviour.
+        checks = (await client.get("/healthy")).json()["checks"]
+
+        assert checks["identity"]["detail"]["mode"] == "keyring"
 
     async def test_it_names_the_live_provider(self, client: AsyncClient) -> None:
         checks = (await client.get("/healthy")).json()["checks"]

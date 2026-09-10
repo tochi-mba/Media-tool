@@ -46,6 +46,10 @@ class Authenticator(Protocol):
         """A word for how this authenticator works, for ``/healthy`` to report."""
         ...
 
+    async def healthy(self) -> bool:
+        """Whether this authenticator could currently attribute a request."""
+        ...
+
 
 class KeyringAuthenticator:
     """Attributes a request to whoever keyring signed a token for."""
@@ -64,6 +68,9 @@ class KeyringAuthenticator:
     @property
     def describes(self) -> str:
         return "keyring"
+
+    async def healthy(self) -> bool:
+        return await self._verifier.usable()
 
 
 class SingleAccountAuthenticator:
@@ -86,6 +93,10 @@ class SingleAccountAuthenticator:
     @property
     def describes(self) -> str:
         return "disabled"
+
+    async def healthy(self) -> bool:
+        """Always. There is nothing to be unable to reach."""
+        return True
 
 
 __all__ = [

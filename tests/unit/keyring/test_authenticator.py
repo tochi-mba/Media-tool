@@ -89,6 +89,11 @@ class TestKeyringAuthenticator:
     def test_it_describes_itself_for_health(self, keyring_auth: KeyringAuthenticator) -> None:
         assert keyring_auth.describes == "keyring"
 
+    async def test_it_is_healthy_when_it_can_read_the_keys(
+        self, keyring_auth: KeyringAuthenticator
+    ) -> None:
+        assert await keyring_auth.healthy() is True
+
     def test_it_satisfies_the_port(self, keyring_auth: KeyringAuthenticator) -> None:
         assert isinstance(keyring_auth, Authenticator)
 
@@ -106,6 +111,11 @@ class TestSingleAccountAuthenticator:
 
     def test_it_describes_itself_for_health(self) -> None:
         assert SingleAccountAuthenticator(AccountId.parse("local")).describes == "disabled"
+
+    async def test_it_is_always_healthy(self) -> None:
+        # There is nothing to be unable to reach, so an instance in this mode is never
+        # taken out of rotation for an identity problem.
+        assert await SingleAccountAuthenticator(AccountId.parse("local")).healthy() is True
 
     def test_it_satisfies_the_port(self) -> None:
         # The point of the port: the middleware cannot tell which of the two it has.
