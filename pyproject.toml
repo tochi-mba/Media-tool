@@ -105,6 +105,7 @@ ignore = [
     "S101",    # asserts are the point
     "SLF001",  # tests may inspect private state
     "PLR2004", # magic numbers are fine in assertions
+    "PLR0913", # helpers that mirror a wide API legitimately take many arguments
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]

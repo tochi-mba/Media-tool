@@ -33,3 +33,7 @@ class InvalidJobTransitionError(DomainError):
 
 class ArtifactNotFoundError(DomainError):
     """The artifact's metadata is known but its bytes are no longer on disk."""
+
+
+class ArtifactTooLargeError(DomainError):
+    """A download exceeded the configured size ceiling and was discarded."""
