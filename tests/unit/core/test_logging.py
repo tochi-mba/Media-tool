@@ -7,8 +7,14 @@ import json
 import pytest
 
 from media_tool.core.config import LogFormat
-from media_tool.core.context import bind_request_id
-from media_tool.core.logging import add_request_id, configure_logging, get_logger
+from media_tool.core.context import bind_account, bind_request_id
+from media_tool.core.logging import (
+    add_account,
+    add_request_id,
+    configure_logging,
+    get_logger,
+)
+from media_tool.domain.accounts import AccountId
 
 
 @pytest.fixture(autouse=True)
@@ -76,3 +82,20 @@ def test_add_request_id_processor_is_a_no_op_without_a_binding() -> None:
 def test_add_request_id_processor_injects_when_bound() -> None:
     with bind_request_id("r1"):
         assert add_request_id(None, "info", {"event": "x"}) == {"event": "x", "request_id": "r1"}
+
+
+def test_the_account_is_attached_to_every_record(capsys: pytest.CaptureFixture[str]) -> None:
+    # Whose request this was, on every record it produced -- including the ones the job
+    # runner emits later, which inherit the binding with the task.
+    configure_logging(level="INFO", log_format=LogFormat.JSON)
+
+    with bind_account(AccountId.parse("acct_alice")):
+        get_logger("test").info("download_started")
+
+    assert json.loads(capsys.readouterr().out)["account"] == "acct_alice"
+
+
+def test_records_outside_a_request_have_no_account_key() -> None:
+    # Absent rather than present-and-null, so a query can filter on existence -- the same
+    # rule the request id follows.
+    assert add_account(None, "info", {"event": "startup"}) == {"event": "startup"}

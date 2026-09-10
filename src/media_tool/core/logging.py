@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from media_tool.core.config import LogFormat
-from media_tool.core.context import get_request_id
+from media_tool.core.context import get_account, get_request_id
 
 if TYPE_CHECKING:
     from structlog.typing import EventDict, Processor, WrappedLogger
@@ -35,11 +35,29 @@ def add_request_id(
     return event_dict
 
 
+def add_account(
+    _logger: WrappedLogger | None,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    """Attach the account the request was attributed to, if there is one.
+
+    Every record produced while serving a request says whose request it was, which is
+    what makes "why did this person's download fail" answerable without correlating by
+    hand.
+    """
+    account = get_account()
+    if account is not None:
+        event_dict["account"] = str(account)
+    return event_dict
+
+
 def configure_logging(*, level: str, log_format: LogFormat) -> None:
     """Configure structlog process-wide. Safe to call again to change the configuration."""
     shared: list[Processor] = [
         structlog.processors.add_log_level,
         add_request_id,
+        add_account,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),

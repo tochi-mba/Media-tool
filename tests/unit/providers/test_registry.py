@@ -22,8 +22,14 @@ RECIPE = {
 }
 
 
+KEYRING = {
+    "keyring_base_url": "https://keyring.test",
+    "keyring_service_token": "service-token-for-media-tool",
+}
+
+
 def settings_for(**overrides: Any) -> Settings:
-    return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]
+    return Settings(_env_file=None, **{**KEYRING, **overrides})  # type: ignore[call-arg]
 
 
 def test_the_stub_is_the_default() -> None:

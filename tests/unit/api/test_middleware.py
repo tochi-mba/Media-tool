@@ -8,18 +8,17 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
-from media_tool.api.app import create_app
 from media_tool.core.context import get_request_id
+from tests.fakes.keyring import FakeKeyring
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from media_tool.core.config import Settings
+    from fastapi import FastAPI
 
 
 @pytest.fixture
-async def instrumented(settings: Settings) -> AsyncIterator[AsyncClient]:
-    app = create_app(settings)
+async def instrumented(app: FastAPI, keyring: FakeKeyring) -> AsyncIterator[AsyncClient]:
     seen: list[str | None] = []
 
     async def observe() -> dict[str, str | None]:
@@ -40,6 +39,7 @@ async def instrumented(settings: Settings) -> AsyncIterator[AsyncClient]:
             # the handler's exception instead of returning the response Starlette built.
             transport=ASGITransport(app=managed.app, raise_app_exceptions=False),
             base_url="http://test",
+            headers={"Authorization": keyring.authorization_for()},
         ) as http,
     ):
         yield http

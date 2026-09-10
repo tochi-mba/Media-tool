@@ -42,6 +42,9 @@ def jobs(clock: FakeClock) -> InMemoryJobStore:
 
 def settings_with(**overrides: object) -> Settings:
     base: dict[str, object] = {
+        # Production-shaped, so nothing here quietly tests an unauthenticated service.
+        "keyring_base_url": "https://keyring.test",
+        "keyring_service_token": "service-token-for-media-tool",
         "download_concurrency": 2,
         "max_attempts": 3,
         "backoff_base_seconds": 0.1,

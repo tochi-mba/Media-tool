@@ -20,10 +20,12 @@ from media_tool.core.logging import get_logger
 from media_tool.domain.errors import (
     ArtifactNotFoundError,
     ArtifactTooLargeError,
+    AuthenticationError,
     InvalidJobTransitionError,
     InvalidMediaQueryError,
     JobItemNotFoundError,
     JobNotFoundError,
+    KeyringUnavailableError,
 )
 
 if TYPE_CHECKING:
@@ -34,8 +36,14 @@ logger = get_logger(__name__)
 
 PROBLEM_BASE_URI = "https://media-tool.invalid/problems"
 
+WWW_AUTHENTICATE = "Bearer"
+"""The challenge every 401 carries, as RFC 9110 requires one to.
+
+Attached here rather than at each call site so that no future 401 can forget it."""
+
 _STATUS_TITLES = {
     status.HTTP_400_BAD_REQUEST: "Bad request",
+    status.HTTP_401_UNAUTHORIZED: "Unauthenticated",
     status.HTTP_404_NOT_FOUND: "Not found",
     status.HTTP_409_CONFLICT: "Conflict",
     status.HTTP_410_GONE: "Gone",
@@ -54,6 +62,8 @@ _DOMAIN_STATUS = {
     InvalidJobTransitionError: status.HTTP_409_CONFLICT,
     InvalidMediaQueryError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ArtifactTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
+    AuthenticationError: status.HTTP_401_UNAUTHORIZED,
+    KeyringUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 
@@ -79,6 +89,11 @@ def problem_response(
         status_code=status_code,
         content=problem.model_dump(exclude_none=True),
         media_type=PROBLEM_CONTENT_TYPE,
+        headers=(
+            {"WWW-Authenticate": WWW_AUTHENTICATE}
+            if status_code == status.HTTP_401_UNAUTHORIZED
+            else None
+        ),
     )
 
 

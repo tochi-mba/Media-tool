@@ -10,6 +10,7 @@ import uvicorn
 import media_tool.__main__ as entrypoint
 
 
+@pytest.mark.usefixtures("keyring_env")
 def test_main_serves_the_app_factory_on_the_configured_address(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -16,17 +16,17 @@ from pydantic import BaseModel
 
 from media_tool.api.app import create_app
 from media_tool.api.errors import register_exception_handlers
+from media_tool.core.config import Settings
 from media_tool.domain.errors import (
     ArtifactTooLargeError,
     InvalidJobTransitionError,
     InvalidMediaQueryError,
     JobNotFoundError,
 )
+from tests.fakes.keyring import FakeKeyring
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
-
-    from media_tool.core.config import Settings
 
 RAISERS: dict[str, Exception] = {
     "/boom/not-found": JobNotFoundError("no job 'x'"),
@@ -45,10 +45,12 @@ class _Body(BaseModel):
 
 
 @pytest.fixture
-async def faulty_client(settings: Settings) -> AsyncIterator[AsyncClient]:
-    """An app whose routes do nothing but raise, one per error type."""
-    app = create_app(settings)
+async def faulty_client(app: FastAPI, keyring: FakeKeyring) -> AsyncIterator[AsyncClient]:
+    """An app whose routes do nothing but raise, one per error type.
 
+    The real app, so the routes sit behind the real middleware: an error response has to
+    survive authentication and the request context to be the one a client sees.
+    """
     for path, error in RAISERS.items():
         app.add_api_route(path, _raiser(error), methods=["GET"])
 
@@ -67,6 +69,7 @@ async def faulty_client(settings: Settings) -> AsyncIterator[AsyncClient]:
             # the handler's exception instead of returning the response Starlette built.
             transport=ASGITransport(app=managed.app, raise_app_exceptions=False),
             base_url="http://test",
+            headers={"Authorization": keyring.authorization_for()},
         ) as http,
     ):
         yield http

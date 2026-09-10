@@ -28,6 +28,7 @@ def clock() -> FakeClock:
 def container(tmp_path: Path, clock: FakeClock) -> Container:
     settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
+        require_authentication=False,
         artifact_dir=tmp_path / "artifacts",
         job_ttl_seconds=60,
         artifact_ttl_seconds=60,

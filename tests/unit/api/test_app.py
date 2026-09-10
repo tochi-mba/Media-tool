@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from media_tool.api.app import create_app, start, stop
 from media_tool.api.routers import ROUTERS
 
@@ -28,6 +30,7 @@ def test_every_registered_router_is_published(settings: Settings) -> None:
     assert declared <= published
 
 
+@pytest.mark.usefixtures("keyring_env")
 def test_the_factory_loads_settings_from_the_environment_when_given_none() -> None:
     app = create_app()
 

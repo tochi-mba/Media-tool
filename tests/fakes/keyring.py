@@ -5,6 +5,10 @@ verification under test does actual cryptography rather than trusting a stub. It
 deliberately as strict as keyring itself: a fake that accepts what the real service
 rejects teaches the wrong contract, which is exactly the class of bug the live browser
 tests caught in the download provider.
+
+:class:`FakeKeyringSigner` is the crypto on its own, for testing the verifier.
+:class:`FakeKeyring` puts it behind an httpx transport so the whole service can be run
+against a keyring that never opens a socket.
 """
 
 from __future__ import annotations
@@ -14,9 +18,12 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+from media_tool.core.keyring.tokens import JWKS_PATH
 
 ALGORITHM = "RS256"
 ISSUER = "https://keyring.test"
@@ -109,3 +116,41 @@ class FakeKeyringSigner:
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
         return hashlib.sha256(public_pem).hexdigest()[:16]
+
+
+class FakeKeyring:
+    """The keyring service, in process, reachable over an httpx transport.
+
+    Only the endpoints media-tool actually calls exist, and each one answers exactly what
+    the real service answers -- including refusing what it refuses. An unknown path is a
+    404 rather than a helpful default, because a fake that invents endpoints lets a
+    caller depend on one that is not there.
+    """
+
+    def __init__(self, *, issuer: str = ISSUER, service_token: str = SERVICE_TOKEN) -> None:
+        self.signer = FakeKeyringSigner(issuer=issuer)
+        self.service_token = service_token
+        self.jwks_requests = 0
+        self.unreachable = False
+        """Set to simulate an outage: every request raises, as a dead host does."""
+
+        self.transport = httpx.MockTransport(self._handle)
+
+    def token_for(self, account_id: str = ACCOUNT_ID, **overrides: Any) -> str:
+        """Mint a user token for ``account_id``, as keyring's service-token endpoint would."""
+        return self.signer.issue(account_id=account_id, **overrides)
+
+    def authorization_for(self, account_id: str = ACCOUNT_ID, **overrides: Any) -> str:
+        """The same token, as a complete ``Authorization`` header value."""
+        return f"Bearer {self.token_for(account_id, **overrides)}"
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        if self.unreachable:
+            msg = "keyring is unreachable"
+            raise httpx.ConnectError(msg)
+
+        if request.url.path == JWKS_PATH:
+            self.jwks_requests += 1
+            return httpx.Response(200, json=self.signer.jwks())
+
+        return httpx.Response(404, json={"detail": "no such endpoint"})
