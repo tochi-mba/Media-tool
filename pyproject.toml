@@ -213,6 +213,9 @@ source_modules = [
     "media_tool.domain",
     "media_tool.jobs",
     "media_tool.storage",
+    "media_tool.providers.base",
+    "media_tool.providers.stub",
+    "media_tool.providers.registry",
 ]
 forbidden_modules = ["playwright"]
 # Every non-browser provider module is added to this list as it is created.
