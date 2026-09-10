@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query, Response, status
 from fastapi.responses import FileResponse
 
-from media_tool.api.dependencies import ContainerDep
+from media_tool.api.dependencies import AccountDep, ContainerDep
 from media_tool.api.schemas.common import Problem
 from media_tool.api.schemas.downloads import (
     ArtifactView,
@@ -58,6 +58,7 @@ ItemIndex = Annotated[int, Path(ge=0, description="Position of the item in the s
 async def create_download_job(
     payload: CreateDownloadJobRequest,
     container: ContainerDep,
+    account: AccountDep,
     response: Response,
 ) -> CreateDownloadJobResponse:
     """Validate a batch, register it, and start work."""
@@ -74,7 +75,7 @@ async def create_download_job(
         for item in payload.items
     ]
 
-    job = Job.create(queries=queries, now=container.clock.now())
+    job = Job.create(account=account, queries=queries, now=container.clock.now())
     await container.jobs.add(job)
     await container.runner.submit(job)
 
@@ -107,6 +108,7 @@ async def create_download_job(
 async def get_download_job(
     job_id: JobId,
     container: ContainerDep,
+    account: AccountDep,
     wait_seconds: Annotated[
         float,
         Query(
@@ -121,10 +123,10 @@ async def get_download_job(
 ) -> JobView:
     """Return a job, optionally waiting for it to settle first."""
     ttl = container.settings.job_ttl_seconds
-    job = await container.jobs.get(job_id, ttl_seconds=ttl)
+    job = await container.jobs.get(job_id, account=account, ttl_seconds=ttl)
 
     if wait_seconds > 0:
-        job = await container.jobs.wait_for_terminal(job_id, timeout=wait_seconds)
+        job = await container.jobs.wait_for_terminal(job_id, account=account, timeout=wait_seconds)
 
     return _job_view(job)
 
@@ -142,9 +144,13 @@ async def get_download_job(
     response_model=JobView,
     responses=PROBLEM_RESPONSES,
 )
-async def cancel_download_job(job_id: JobId, container: ContainerDep) -> JobView:
+async def cancel_download_job(
+    job_id: JobId, container: ContainerDep, account: AccountDep
+) -> JobView:
     """Stop a job and report where it got to."""
-    job = await container.jobs.get(job_id, ttl_seconds=container.settings.job_ttl_seconds)
+    job = await container.jobs.get(
+        job_id, account=account, ttl_seconds=container.settings.job_ttl_seconds
+    )
     await container.runner.cancel(job)
 
     return _job_view(job)
@@ -169,10 +175,12 @@ async def cancel_download_job(job_id: JobId, container: ContainerDep) -> JobView
     },
 )
 async def fetch_download_file(
-    job_id: JobId, index: ItemIndex, container: ContainerDep
+    job_id: JobId, index: ItemIndex, container: ContainerDep, account: AccountDep
 ) -> FileResponse:
     """Serve one captured artifact."""
-    job = await container.jobs.get(job_id, ttl_seconds=container.settings.job_ttl_seconds)
+    job = await container.jobs.get(
+        job_id, account=account, ttl_seconds=container.settings.job_ttl_seconds
+    )
     item = job.item(index)
 
     if item.artifact is None:

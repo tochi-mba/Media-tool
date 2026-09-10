@@ -20,7 +20,8 @@ from media_tool.api.middleware import PUBLIC_PATHS
 from media_tool.core.config import Settings
 from media_tool.core.container import Container
 from media_tool.domain.errors import AuthenticationError
-from tests.fakes.keyring import ACCOUNT_ID, OTHER_ACCOUNT_ID, FakeKeyring
+from tests.fakes.accounts import ACCOUNT_ID, OTHER_ACCOUNT_ID
+from tests.fakes.keyring import FakeKeyring
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

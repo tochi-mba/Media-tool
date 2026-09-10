@@ -13,6 +13,7 @@ from media_tool.core.container import Container
 from media_tool.domain.jobs import Job
 from media_tool.domain.media import MediaQuery
 from media_tool.providers.stub import StubDownloadProvider
+from tests.fakes.accounts import ALICE
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ class TestRetention:
     async def test_sweeping_drops_expired_jobs_and_their_files(
         self, container: Container, clock: FakeClock
     ) -> None:
-        job = Job.create(queries=[MediaQuery.create(name="Dune")], now=clock.now())
+        job = Job.create(account=ALICE, queries=[MediaQuery.create(name="Dune")], now=clock.now())
         await container.jobs.add(job)
         await container.runner.run(job)
         assert job.items[0].artifact is not None
@@ -69,7 +70,7 @@ class TestRetention:
     async def test_sweeping_leaves_live_jobs_alone(
         self, container: Container, clock: FakeClock
     ) -> None:
-        job = Job.create(queries=[MediaQuery.create(name="Dune")], now=clock.now())
+        job = Job.create(account=ALICE, queries=[MediaQuery.create(name="Dune")], now=clock.now())
         await container.jobs.add(job)
 
         assert await container.sweep_once() == 0
@@ -80,7 +81,7 @@ class TestBackgroundSweeper:
     async def test_the_sweeper_evicts_on_its_own(
         self, container: Container, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        job = Job.create(queries=[MediaQuery.create(name="Dune")], now=clock.now())
+        job = Job.create(account=ALICE, queries=[MediaQuery.create(name="Dune")], now=clock.now())
         await container.jobs.add(job)
         clock.advance(timedelta(seconds=61))
 

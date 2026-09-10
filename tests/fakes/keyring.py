@@ -24,13 +24,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from media_tool.core.keyring.tokens import JWKS_PATH
+from tests.fakes.accounts import ACCOUNT_ID
 
 ALGORITHM = "RS256"
 ISSUER = "https://keyring.test"
 AUDIENCE = "media-tool"
 SERVICE_TOKEN = "service-token-for-media-tool"  # noqa: S105 - a fixture, not a credential
-ACCOUNT_ID = "acct_alice"
-OTHER_ACCOUNT_ID = "acct_bob"
 
 
 def _merged(base: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, Any]:

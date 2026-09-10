@@ -18,6 +18,7 @@ from media_tool.providers.base import (
     ProviderUnavailableError,
 )
 from media_tool.storage.local import LocalArtifactStore
+from tests.fakes.accounts import ALICE
 from tests.fakes.clock import FakeClock
 from tests.fakes.provider import FakeProvider
 
@@ -81,7 +82,9 @@ def make_runner(
 
 
 async def make_job(jobs: InMemoryJobStore, clock: FakeClock, *names: str) -> Job:
-    job = Job.create(queries=[MediaQuery.create(name=name) for name in names], now=clock.now())
+    job = Job.create(
+        account=ALICE, queries=[MediaQuery.create(name=name) for name in names], now=clock.now()
+    )
     await jobs.add(job)
     return job
 
@@ -448,7 +451,7 @@ class TestSubmission:
         job = await make_job(jobs, clock, "Dune")
 
         await runner.submit(job)
-        settled = await jobs.wait_for_terminal(job.job_id, timeout=5)
+        settled = await jobs.wait_for_terminal(job.job_id, timeout=5, account=ALICE)
 
         assert settled.status is JobStatus.SUCCEEDED
 
@@ -459,7 +462,7 @@ class TestSubmission:
         job = await make_job(jobs, clock, "Dune")
 
         await runner.submit(job)
-        await jobs.wait_for_terminal(job.job_id, timeout=5)
+        await jobs.wait_for_terminal(job.job_id, timeout=5, account=ALICE)
 
         assert await runner.drain(timeout=5) is True
         assert runner.in_flight == 0

@@ -4,6 +4,11 @@ A job is one submitted batch. It owns its items' outcomes and derives its own st
 from them, so no caller can put it into a state its items don't support. Everything
 that mutates a job takes the current time as an argument -- the aggregate never reads a
 clock itself.
+
+A job also belongs to exactly one account, and is told which at creation. Carrying it on
+the aggregate rather than passing it alongside is what makes "whose job is this" a
+question with one answer: a store cannot file a job under an account the job disagrees
+with, because there is nowhere for the second opinion to live.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
+    from media_tool.domain.accounts import AccountId
     from media_tool.domain.artifacts import DownloadArtifact
     from media_tool.domain.media import MediaQuery
 
@@ -85,6 +91,9 @@ class Job:
     """A batch of downloads and everything known about its progress."""
 
     job_id: str
+    account: AccountId
+    """Whose job this is. Every read of it is checked against this, never against the id."""
+
     items: list[JobItem]
     status: JobStatus
     created_at: datetime
@@ -94,8 +103,8 @@ class Job:
     _cancelled: bool = field(default=False, repr=False)
 
     @classmethod
-    def create(cls, *, queries: Sequence[MediaQuery], now: datetime) -> Job:
-        """Start a new queued job covering ``queries``.
+    def create(cls, *, account: AccountId, queries: Sequence[MediaQuery], now: datetime) -> Job:
+        """Start a new queued job for ``account`` covering ``queries``.
 
         Raises:
             ValueError: if no queries were supplied.
@@ -106,6 +115,7 @@ class Job:
 
         return cls(
             job_id=uuid.uuid4().hex,
+            account=account,
             items=[JobItem(index=index, query=query) for index, query in enumerate(queries)],
             status=JobStatus.QUEUED,
             created_at=now,

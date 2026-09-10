@@ -10,13 +10,14 @@ from media_tool.domain.artifacts import DownloadArtifact
 from media_tool.domain.errors import InvalidJobTransitionError, JobItemNotFoundError
 from media_tool.domain.jobs import ItemStatus, Job, JobStatus
 from media_tool.domain.media import MediaQuery
+from tests.fakes.accounts import ALICE
 from tests.fakes.clock import EPOCH, FakeClock
 
 
 def make_job(*names: str, clock: FakeClock | None = None) -> Job:
     clock = clock or FakeClock()
     queries = [MediaQuery.create(name=name) for name in names or ("Dune",)]
-    return Job.create(queries=queries, now=clock.now())
+    return Job.create(account=ALICE, queries=queries, now=clock.now())
 
 
 def make_artifact(filename: str = "dune.bin") -> DownloadArtifact:
@@ -49,7 +50,7 @@ class TestCreation:
 
     def test_a_job_needs_at_least_one_item(self) -> None:
         with pytest.raises(ValueError, match="at least one"):
-            Job.create(queries=[], now=EPOCH)
+            Job.create(account=ALICE, queries=[], now=EPOCH)
 
 
 class TestLifecycle:

@@ -17,7 +17,8 @@ from pydantic import SecretStr
 from media_tool.api.app import create_app
 from media_tool.core.config import LogFormat, Settings
 from media_tool.core.container import Container
-from tests.fakes.keyring import ACCOUNT_ID, ISSUER, OTHER_ACCOUNT_ID, SERVICE_TOKEN, FakeKeyring
+from tests.fakes.accounts import ACCOUNT_ID, OTHER_ACCOUNT_ID
+from tests.fakes.keyring import ISSUER, SERVICE_TOKEN, FakeKeyring
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

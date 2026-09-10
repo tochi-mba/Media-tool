@@ -14,13 +14,9 @@ import pytest
 from media_tool.core.keyring.tokens import JWKS_PATH, TokenVerifier
 from media_tool.domain.accounts import AccountId
 from media_tool.domain.errors import AuthenticationError, KeyringUnavailableError
+from tests.fakes.accounts import ACCOUNT_ID
 from tests.fakes.clock import FakeClock
-from tests.fakes.keyring import (
-    ACCOUNT_ID,
-    AUDIENCE,
-    ISSUER,
-    FakeKeyringSigner,
-)
+from tests.fakes.keyring import AUDIENCE, ISSUER, FakeKeyringSigner
 
 
 @pytest.fixture
