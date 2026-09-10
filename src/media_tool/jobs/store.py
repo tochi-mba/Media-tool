@@ -82,6 +82,15 @@ class JobStore(Protocol):
         """
         ...
 
+    async def count_active(self, account: AccountId) -> int:
+        """How many of ``account``'s jobs have not finished.
+
+        The number a quota is measured against: finished jobs cost nothing but the
+        record, and holding somebody to a limit on those would make the service get
+        slower to use the longer they had used it.
+        """
+        ...
+
 
 class InMemoryJobStore:
     """Holds jobs in a dictionary guarded by an asyncio lock."""
@@ -155,6 +164,14 @@ class InMemoryJobStore:
     async def count(self) -> int:
         async with self._lock:
             return len(self._jobs)
+
+    async def count_active(self, account: AccountId) -> int:
+        async with self._lock:
+            return sum(
+                1
+                for job in self._jobs.values()
+                if job.account == account and not job.status.is_terminal
+            )
 
     def _get_locked(self, job_id: str, *, account: AccountId, ttl_seconds: float | None) -> Job:
         job = self._jobs.get(job_id)

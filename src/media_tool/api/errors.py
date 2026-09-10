@@ -28,6 +28,8 @@ from media_tool.domain.errors import (
     JobNotFoundError,
     KeyringRejectedError,
     KeyringUnavailableError,
+    QuotaExceededError,
+    RateLimitedError,
     ReauthenticationRequiredError,
 )
 
@@ -44,6 +46,14 @@ WWW_AUTHENTICATE = "Bearer"
 
 Attached here rather than at each call site so that no future 401 can forget it."""
 
+RETRY_AFTER_SECONDS = "5"
+"""What every 429 tells a caller to wait.
+
+A single number rather than a computed one: neither limit has an honest answer -- a job
+finishes when it finishes -- and a caller that is told to come back is better served by
+a plain interval than by a guess dressed up as a deadline. It is here so that a model
+calling this as a tool has something to obey instead of a retry loop."""
+
 _STATUS_TITLES = {
     status.HTTP_400_BAD_REQUEST: "Bad request",
     status.HTTP_401_UNAUTHORIZED: "Unauthenticated",
@@ -52,6 +62,7 @@ _STATUS_TITLES = {
     status.HTTP_410_GONE: "Gone",
     status.HTTP_413_CONTENT_TOO_LARGE: "Payload too large",
     status.HTTP_422_UNPROCESSABLE_CONTENT: "Validation failed",
+    status.HTTP_429_TOO_MANY_REQUESTS: "Too many requests",
     status.HTTP_500_INTERNAL_SERVER_ERROR: "Internal server error",
     status.HTTP_503_SERVICE_UNAVAILABLE: "Service unavailable",
 }
@@ -68,6 +79,8 @@ _DOMAIN_STATUS = {
     AuthenticationError: status.HTTP_401_UNAUTHORIZED,
     ReauthenticationRequiredError: status.HTTP_401_UNAUTHORIZED,
     CredentialNotFoundError: status.HTTP_404_NOT_FOUND,
+    QuotaExceededError: status.HTTP_429_TOO_MANY_REQUESTS,
+    RateLimitedError: status.HTTP_429_TOO_MANY_REQUESTS,
     KeyringUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
     # Keyring refusing this service is a misconfiguration of this service, so it is not
     # usable rather than the caller being unwelcome.
@@ -97,12 +110,17 @@ def problem_response(
         status_code=status_code,
         content=problem.model_dump(exclude_none=True),
         media_type=PROBLEM_CONTENT_TYPE,
-        headers=(
-            {"WWW-Authenticate": WWW_AUTHENTICATE}
-            if status_code == status.HTTP_401_UNAUTHORIZED
-            else None
-        ),
+        headers=_headers_for(status_code),
     )
+
+
+def _headers_for(status_code: int) -> dict[str, str] | None:
+    """Headers a status code obliges the response to carry, wherever it is produced."""
+    if status_code == status.HTTP_401_UNAUTHORIZED:
+        return {"WWW-Authenticate": WWW_AUTHENTICATE}
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        return {"Retry-After": RETRY_AFTER_SECONDS}
+    return None
 
 
 def _slug_for(status_code: int) -> str:

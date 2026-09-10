@@ -21,7 +21,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from media_tool.api.errors import problem_response, unhandled_problem_response
 from media_tool.core.context import bind_account, bind_request_id, new_request_id
 from media_tool.core.logging import get_logger
-from media_tool.domain.errors import AuthenticationError, KeyringUnavailableError
+from media_tool.domain.errors import (
+    AuthenticationError,
+    KeyringUnavailableError,
+    RateLimitedError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -122,9 +126,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
-        authenticator = request.app.state.container.authenticator
+        container = request.app.state.container
         try:
-            account = await authenticator.account_for(request.headers.get("Authorization"))
+            account = await container.authenticator.account_for(
+                request.headers.get("Authorization")
+            )
         except AuthenticationError as error:
             # Deliberately not raised: an exception here would unwind past the app's own
             # handlers into the context middleware, which would render it as a 500.
@@ -148,4 +154,16 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # completion record, which is emitted after this binding has unwound.
         request.state.account = account
         with bind_account(account):
+            try:
+                # Here rather than in a handler: a request that will not be answered
+                # should cost as little as possible, and this is the first point at
+                # which there is an account to count it against.
+                container.rate_limiter.check(account)
+            except RateLimitedError as error:
+                return problem_response(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=str(error),
+                    problem_type="rate-limited",
+                )
+
             return await call_next(request)

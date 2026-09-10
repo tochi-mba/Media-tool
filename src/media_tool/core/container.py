@@ -20,6 +20,7 @@ from media_tool.core.keyring.authenticator import (
 )
 from media_tool.core.keyring.client import KeyringClient
 from media_tool.core.keyring.tokens import TokenVerifier
+from media_tool.core.limits import AccountQuotas, AccountRateLimiter
 from media_tool.core.logging import get_logger
 from media_tool.domain.accounts import AccountId
 from media_tool.jobs.runner import DownloadJobRunner
@@ -51,6 +52,8 @@ class Container:
     provider: DownloadProvider
     runner: DownloadJobRunner
     authenticator: Authenticator
+    quotas: AccountQuotas
+    rate_limiter: AccountRateLimiter
     started_monotonic: float
     keyring: KeyringClient | None = None
     _sweeper: asyncio.Task[None] | None = None
@@ -99,6 +102,12 @@ class Container:
                 settings=settings,
             ),
             authenticator=authenticator,
+            quotas=AccountQuotas(jobs=jobs, artifacts=artifacts, settings=settings),
+            rate_limiter=AccountRateLimiter(
+                clock=clock,
+                burst=settings.request_burst_per_account,
+                per_second=settings.requests_per_second_per_account,
+            ),
             keyring=keyring,
             started_monotonic=clock.monotonic(),
         )

@@ -131,6 +131,20 @@ class Settings(BaseSettings):
     anonymous_account: str = "local"
     """Who every request belongs to when authentication is off."""
 
+    # -- Per-account limits ------------------------------------------------------------
+    # One process shared by a handful of people. Without these, any one of them can make
+    # it useless for the rest by accident.
+    max_active_jobs_per_account: PositiveInt = 5
+    max_bytes_per_account: PositiveInt = 16 * 1024 * BYTES_PER_MIB
+    request_burst_per_account: PositiveInt = 60
+    """How many requests an account may make at once.
+
+    Generous on purpose: the honest shape of this traffic is a batch submitted and then
+    polled, and a small burst would punish the caller using the long poll correctly.
+    """
+
+    requests_per_second_per_account: PositiveFloat = 5.0
+
     # -- Download orchestration --------------------------------------------------------
     provider: ProviderName = ProviderName.STUB
     download_concurrency: PositiveInt = 4

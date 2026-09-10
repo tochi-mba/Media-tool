@@ -100,6 +100,10 @@ class ArtifactStore(Protocol):
         """Sweep orphaned artifacts idle longer than ``ttl_seconds``. Returns how many went."""
         ...
 
+    def usage_bytes(self, account: AccountId) -> int:
+        """Total size of everything ``account`` currently has stored."""
+        ...
+
     def health(self) -> StorageHealth:
         """Report whether the store can currently accept writes."""
         ...

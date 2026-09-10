@@ -283,6 +283,20 @@ class LocalArtifactStore:
         """Where one item's file lives. The single place the layout is spelled out."""
         return self.root / str(account) / job_id / str(index)
 
+    def usage_bytes(self, account: AccountId) -> int:
+        """Add up everything one account has stored.
+
+        Walked rather than tracked. A counter would have to survive restarts and stay
+        correct across every path that deletes a file, and being wrong about a quota is
+        worse than being slow about one -- at the scale this service is built for, a few
+        hundred files is a few milliseconds.
+        """
+        account_dir = self.root / str(account)
+        if not account_dir.is_dir():
+            return 0
+
+        return sum(path.stat().st_size for path in account_dir.rglob("*") if path.is_file())
+
     def health(self) -> StorageHealth:
         """Report writability and remaining space."""
         probe = self.staging_root / f".health-{uuid.uuid4().hex}"

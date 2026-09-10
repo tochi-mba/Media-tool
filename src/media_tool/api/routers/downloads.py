@@ -30,6 +30,13 @@ router = APIRouter(prefix="/v1/downloads", tags=["downloads"])
 MAX_WAIT_SECONDS = 60.0
 PROBLEM_RESPONSES: dict[int | str, dict[str, object]] = {
     status.HTTP_404_NOT_FOUND: {"model": Problem, "description": "No such job."},
+    status.HTTP_429_TOO_MANY_REQUESTS: {
+        "model": Problem,
+        "description": (
+            "A per-account limit was reached. The detail names which one and what "
+            "fixes it; Retry-After says how long to wait."
+        ),
+    },
     status.HTTP_422_UNPROCESSABLE_CONTENT: {
         "model": Problem,
         "description": "The request could not be understood.",
@@ -62,6 +69,8 @@ async def create_download_job(
     response: Response,
 ) -> CreateDownloadJobResponse:
     """Validate a batch, register it, and start work."""
+    await container.quotas.check_can_submit(account)
+
     settings = container.settings
     if len(payload.items) > settings.max_items_per_request:
         msg = (

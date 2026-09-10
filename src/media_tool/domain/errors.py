@@ -91,3 +91,19 @@ class CredentialNotFoundError(DomainError):
     Not a failure of authentication: the caller is who they say they are and simply has
     not connected that account yet.
     """
+
+
+class QuotaExceededError(DomainError):
+    """An account is already using as much of something as it is allowed to.
+
+    Names which limit was reached, because the two are fixed by entirely different
+    actions: waiting for work to finish, or deleting files.
+    """
+
+
+class RateLimitedError(DomainError):
+    """An account is making requests faster than the service will answer them.
+
+    Distinct from a quota: nothing is full, the caller is simply going too fast, and the
+    fix is to wait a moment rather than to change anything.
+    """
