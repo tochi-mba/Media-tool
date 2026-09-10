@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tests.conftest import container_of
+from tests.fakes.accounts import ALICE
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -293,7 +294,7 @@ class TestFiles:
 
     async def test_a_purged_file_is_not_found(self, client: AsyncClient, app: FastAPI) -> None:
         job = await submit_and_finish(client, DUNE)
-        container_of(app).artifacts.purge_job(job["job_id"])
+        container_of(app).artifacts.purge_job(account=ALICE, job_id=job["job_id"])
 
         response = await client.get(job["results"][0]["links"]["file"])
 

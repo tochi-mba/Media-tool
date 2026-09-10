@@ -66,8 +66,13 @@ class JobStore(Protocol):
         """
         ...
 
-    async def purge_expired(self, *, ttl_seconds: float) -> list[str]:
-        """Drop jobs idle longer than ``ttl_seconds``. Returns the ids that went."""
+    async def purge_expired(self, *, ttl_seconds: float) -> list[Job]:
+        """Drop jobs idle longer than ``ttl_seconds``. Returns the jobs that went.
+
+        The jobs rather than their ids, because whoever cleans up after them needs to
+        know whose they were: an artifact lives under its account, and an id alone no
+        longer names a file.
+        """
         ...
 
     async def count(self) -> int:
@@ -131,19 +136,19 @@ class InMemoryJobStore:
         # Re-read: the job may have been purged while we waited.
         return await self.get(job_id, account=account)
 
-    async def purge_expired(self, *, ttl_seconds: float) -> list[str]:
+    async def purge_expired(self, *, ttl_seconds: float) -> list[Job]:
         now = self._clock.now()
 
         async with self._lock:
             expired = [
-                job_id
-                for job_id, job in self._jobs.items()
+                job
+                for job in self._jobs.values()
                 if job.is_expired(now=now, ttl_seconds=ttl_seconds)
             ]
-            for job_id in expired:
-                del self._jobs[job_id]
+            for job in expired:
+                del self._jobs[job.job_id]
                 # Release anyone still waiting; they will re-read and find it gone.
-                self._settled.pop(job_id).set()
+                self._settled.pop(job.job_id).set()
 
         return expired
 

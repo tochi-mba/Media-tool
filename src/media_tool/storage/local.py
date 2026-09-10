@@ -3,11 +3,21 @@
 Layout::
 
     <root>/.staging/<uuid>        in-progress captures, invisible to readers
-    <root>/<job_id>/<index>/<filename>
+    <root>/<account>/<job_id>/<index>/<filename>
 
 Giving every item its own directory means two items in a batch can produce files with
 the same name without either one clobbering the other, and it makes lookup a direct
 path build rather than a search.
+
+The account is the outermost segment, so one account's files are not merely unreachable
+through the API -- they are somewhere else on disk. A path built for the wrong account
+does not name another account's file; it names nothing. That is defence in depth behind
+the job store's check, and it is the difference between an authorization bug leaking
+files and an authorization bug producing a 404.
+
+Staging stays outside the per-account tree. Nothing is readable from there, its names
+are uuid4, and a single staging directory keeps the publish an atomic rename within one
+filesystem rather than a copy across two.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from media_tool.core.clock import Clock
+    from media_tool.domain.accounts import AccountId
 
 DEFAULT_FILENAME = "download.bin"
 """Used when a site supplies a name that sanitizes away to nothing."""
@@ -156,12 +167,12 @@ class LocalArtifactStore:
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
-    def reserve(self, *, job_id: str, index: int) -> Iterator[_LocalSink]:
+    def reserve(self, *, account: AccountId, job_id: str, index: int) -> Iterator[_LocalSink]:
         """Open a staging slot, cleaning it up on any exit that did not publish."""
         staging_path = self.staging_root / uuid.uuid4().hex
         sink = _LocalSink(
             staging_path=staging_path,
-            destination_dir=self.root / job_id / str(index),
+            destination_dir=self._item_dir(account, job_id, index),
             max_file_bytes=self._max_file_bytes,
             clock=self._clock,
             started_at=self._clock.now(),
@@ -172,13 +183,18 @@ class LocalArtifactStore:
         finally:
             staging_path.unlink(missing_ok=True)
 
-    def locate(self, *, job_id: str, index: int, filename: str) -> Path:
-        """Resolve one stored artifact, refusing anything that addresses outside the root."""
+    def locate(self, *, account: AccountId, job_id: str, index: int, filename: str) -> Path:
+        """Resolve one stored artifact, refusing anything that addresses outside the root.
+
+        The account is not checked against the segment pattern because it cannot fail it:
+        :class:`~media_tool.domain.accounts.AccountId` refuses anything that is not a
+        single safe segment at the point it is parsed, which is the only way one is made.
+        """
         if not _SAFE_SEGMENT.match(job_id) or not _SAFE_SEGMENT.match(filename):
             msg = f"no artifact for job {job_id!r} item {index}"
             raise ArtifactNotFoundError(msg)
 
-        candidate = (self.root / job_id / str(index) / filename).resolve()
+        candidate = (self._item_dir(account, job_id, index) / filename).resolve()
 
         # Belt and braces: the segment check above should make this unreachable, but a
         # symlink inside the root could still point out of it.
@@ -189,7 +205,13 @@ class LocalArtifactStore:
         return candidate
 
     def link_artifact(
-        self, *, job_id: str, source_index: int, target_index: int, filename: str
+        self,
+        *,
+        account: AccountId,
+        job_id: str,
+        source_index: int,
+        target_index: int,
+        filename: str,
     ) -> DownloadArtifact:
         """Make an already-stored artifact available under a second item index.
 
@@ -201,8 +223,8 @@ class LocalArtifactStore:
         Raises:
             ArtifactNotFoundError: if the source artifact is missing.
         """
-        source = self.locate(job_id=job_id, index=source_index, filename=filename)
-        destination_dir = self.root / job_id / str(target_index)
+        source = self.locate(account=account, job_id=job_id, index=source_index, filename=filename)
+        destination_dir = self._item_dir(account, job_id, target_index)
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / filename
 
@@ -215,7 +237,7 @@ class LocalArtifactStore:
 
         return _artifact_for(source, filename=filename, clock=self._clock)
 
-    def purge_job(self, job_id: str) -> bool:
+    def purge_job(self, *, account: AccountId, job_id: str) -> bool:
         """Delete one job's artifacts. Returns whether there was anything to delete.
 
         This is the primary retention path: the job store knows, from the injected
@@ -224,7 +246,7 @@ class LocalArtifactStore:
         if not _SAFE_SEGMENT.match(job_id):
             return False
 
-        job_dir = self.root / job_id
+        job_dir = self.root / str(account) / job_id
         if not job_dir.is_dir():
             return False
 
@@ -238,18 +260,28 @@ class LocalArtifactStore:
         than the normal retention path, which is :meth:`purge_job`. It reads filesystem
         modification times because that is the only record an orphan still has; it is
         the one place in this class that does not consult the injected clock.
+
+        Job directories go; the account directory they sat in stays. An empty directory
+        costs nothing, and removing it would race the next job that account submits.
         """
         cutoff = datetime.now(UTC) - timedelta(seconds=ttl_seconds)
         removed = 0
 
-        for job_dir in self.root.iterdir():
-            if job_dir.name == STAGING_DIR_NAME or not job_dir.is_dir():
+        for account_dir in self.root.iterdir():
+            if account_dir.name == STAGING_DIR_NAME or not account_dir.is_dir():
                 continue
-            if _modified_at(job_dir) < cutoff:
-                shutil.rmtree(job_dir, ignore_errors=True)
-                removed += 1
+            for job_dir in account_dir.iterdir():
+                if not job_dir.is_dir():
+                    continue
+                if _modified_at(job_dir) < cutoff:
+                    shutil.rmtree(job_dir, ignore_errors=True)
+                    removed += 1
 
         return removed
+
+    def _item_dir(self, account: AccountId, job_id: str, index: int) -> Path:
+        """Where one item's file lives. The single place the layout is spelled out."""
+        return self.root / str(account) / job_id / str(index)
 
     def health(self) -> StorageHealth:
         """Report writability and remaining space."""

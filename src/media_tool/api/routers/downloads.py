@@ -187,7 +187,9 @@ async def fetch_download_file(
         msg = f"item {index} of job {job_id!r} produced no file ({item.status.value})"
         raise JobNotFoundError(msg)
 
-    path = container.artifacts.locate(job_id=job_id, index=index, filename=item.artifact.filename)
+    path = container.artifacts.locate(
+        account=account, job_id=job_id, index=index, filename=item.artifact.filename
+    )
 
     return FileResponse(
         path,

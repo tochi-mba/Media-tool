@@ -106,7 +106,7 @@ class TestHappyPath:
         for item in job.items:
             assert item.artifact is not None
             assert artifacts.locate(
-                job_id=job.job_id, index=item.index, filename=item.artifact.filename
+                account=ALICE, job_id=job.job_id, index=item.index, filename=item.artifact.filename
             ).exists()
 
     async def test_the_job_is_marked_running_then_settled(
@@ -170,7 +170,7 @@ class TestDeduplication:
         assert duplicate.artifact is not None
         assert duplicate.artifact.sha256 == first.artifact.sha256
         assert artifacts.locate(
-            job_id=job.job_id, index=2, filename=duplicate.artifact.filename
+            account=ALICE, job_id=job.job_id, index=2, filename=duplicate.artifact.filename
         ).exists()
 
     async def test_a_failure_is_fanned_out_to_every_duplicate(

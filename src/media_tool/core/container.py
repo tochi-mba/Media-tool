@@ -131,8 +131,8 @@ class Container:
         that describes it.
         """
         purged = await self.jobs.purge_expired(ttl_seconds=self.settings.job_ttl_seconds)
-        for job_id in purged:
-            self.artifacts.purge_job(job_id)
+        for job in purged:
+            self.artifacts.purge_job(account=job.account, job_id=job.job_id)
 
         # Catches files whose job record died with a previous process.
         self.artifacts.purge_expired(ttl_seconds=self.settings.artifact_ttl_seconds)

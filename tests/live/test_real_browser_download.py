@@ -23,6 +23,7 @@ from media_tool.providers.browser.download_provider import BrowserDownloadProvid
 from media_tool.providers.browser.playwright_runtime import PlaywrightBrowserRuntime
 from media_tool.providers.browser.recipes import SiteRecipe
 from media_tool.storage.local import LocalArtifactStore
+from tests.fakes.accounts import ALICE
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -88,7 +89,7 @@ async def fetch(
     query: MediaQuery,
     index: int = 0,
 ) -> DownloadArtifact:
-    with store.reserve(job_id="live", index=index) as sink:
+    with store.reserve(account=ALICE, job_id="live", index=index) as sink:
         return await provider.download(query=query, sink=sink)
 
 
@@ -97,7 +98,7 @@ async def test_a_real_browser_downloads_an_episode_without_anyone_clicking(
 ) -> None:
     artifact = await fetch(provider, store, SEVERANCE)
 
-    stored = store.locate(job_id="live", index=0, filename=artifact.filename)
+    stored = store.locate(account=ALICE, job_id="live", index=0, filename=artifact.filename)
     assert stored.read_bytes() == b"SEVERANCE-EPISODE-PAYLOAD" * 400
 
 
@@ -114,7 +115,7 @@ async def test_the_recorded_digest_matches_the_bytes_on_disk(
 ) -> None:
     artifact = await fetch(provider, store, SEVERANCE)
 
-    stored = store.locate(job_id="live", index=0, filename=artifact.filename)
+    stored = store.locate(account=ALICE, job_id="live", index=0, filename=artifact.filename)
     assert hashlib.sha256(stored.read_bytes()).hexdigest() == artifact.sha256
     assert artifact.size_bytes == stored.stat().st_size
 
@@ -132,7 +133,7 @@ async def test_a_film_resolves_to_a_different_file(
 ) -> None:
     artifact = await fetch(provider, store, DUNE, index=1)
 
-    stored = store.locate(job_id="live", index=1, filename=artifact.filename)
+    stored = store.locate(account=ALICE, job_id="live", index=1, filename=artifact.filename)
     assert stored.read_bytes() == b"DUNE-FILM-PAYLOAD" * 400
 
 

@@ -172,7 +172,7 @@ class TestRetention:
 
         assert await store.get(job.job_id, ttl_seconds=60, account=ALICE) is job
 
-    async def test_purging_returns_the_ids_it_dropped(
+    async def test_purging_returns_the_jobs_it_dropped(
         self, store: InMemoryJobStore, clock: FakeClock
     ) -> None:
         old = make_job(clock)
@@ -183,7 +183,10 @@ class TestRetention:
 
         purged = await store.purge_expired(ttl_seconds=60)
 
-        assert purged == [old.job_id]
+        # The jobs themselves, not their ids: whoever cleans up after them needs to
+        # know whose they were, since an artifact now lives under its account.
+        assert [job.job_id for job in purged] == [old.job_id]
+        assert [job.account for job in purged] == [ALICE]
         assert await store.count() == 1
 
     async def test_purging_an_empty_store_is_harmless(self, store: InMemoryJobStore) -> None:

@@ -15,6 +15,7 @@ from media_tool.domain.media import MediaQuery
 from media_tool.providers.base import DownloadProvider, ProviderNotFoundError
 from media_tool.providers.stub import StubDownloadProvider
 from media_tool.storage.local import LocalArtifactStore
+from tests.fakes.accounts import ALICE
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ def provider() -> StubDownloadProvider:
 async def download(
     provider: StubDownloadProvider, store: LocalArtifactStore, query: MediaQuery
 ) -> DownloadArtifact:
-    with store.reserve(job_id="job1", index=0) as sink:
+    with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
         return await provider.download(query=query, sink=sink)
 
 
@@ -63,7 +64,7 @@ class TestDownloading:
 
         artifact = await download(provider, store, query)
 
-        located = store.locate(job_id="job1", index=0, filename=artifact.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=0, filename=artifact.filename)
         assert located.stat().st_size == artifact.size_bytes
         assert artifact.size_bytes > 0
 

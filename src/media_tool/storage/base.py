@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from pathlib import Path
 
+    from media_tool.domain.accounts import AccountId
     from media_tool.domain.artifacts import DownloadArtifact
 
 
@@ -59,30 +60,39 @@ class ArtifactSink(Protocol):
 class ArtifactStore(Protocol):
     """Where captured files live."""
 
-    def reserve(self, *, job_id: str, index: int) -> AbstractContextManager[ArtifactSink]:
-        """Open a staging slot for one item.
+    def reserve(
+        self, *, account: AccountId, job_id: str, index: int
+    ) -> AbstractContextManager[ArtifactSink]:
+        """Open a staging slot for one of ``account``'s items.
 
         Leaving the context without committing discards whatever was staged, so a failed
         or abandoned download never leaves a partial file behind.
         """
         ...
 
-    def locate(self, *, job_id: str, index: int, filename: str) -> Path:
-        """Resolve a stored artifact to a readable path.
+    def locate(self, *, account: AccountId, job_id: str, index: int, filename: str) -> Path:
+        """Resolve one of ``account``'s stored artifacts to a readable path.
 
         Raises:
-            ArtifactNotFoundError: if it does not exist, or if the arguments try to
-                address anything outside this store.
+            ArtifactNotFoundError: if it does not exist, belongs to another account, or
+                if the arguments try to address anything outside this store. One error
+                for all of them: a file somebody else owns is a file that is not there.
         """
         ...
 
     def link_artifact(
-        self, *, job_id: str, source_index: int, target_index: int, filename: str
+        self,
+        *,
+        account: AccountId,
+        job_id: str,
+        source_index: int,
+        target_index: int,
+        filename: str,
     ) -> DownloadArtifact:
         """Expose an already-stored artifact under a second item index."""
         ...
 
-    def purge_job(self, job_id: str) -> bool:
+    def purge_job(self, *, account: AccountId, job_id: str) -> bool:
         """Delete one job's artifacts. Returns whether there was anything to delete."""
         ...
 

@@ -172,6 +172,7 @@ class DownloadJobRunner:
         job.record_success(leader.index, artifact, now=self._clock.now())
         for duplicate in duplicates:
             copied = self._artifacts.link_artifact(
+                account=job.account,
                 job_id=job.job_id,
                 source_index=leader.index,
                 target_index=duplicate.index,
@@ -212,7 +213,9 @@ class DownloadJobRunner:
         """One try, bounded by the per-item timeout."""
         try:
             async with asyncio.timeout(self._settings.download_timeout_seconds):
-                with self._artifacts.reserve(job_id=job.job_id, index=item.index) as sink:
+                with self._artifacts.reserve(
+                    account=job.account, job_id=job.job_id, index=item.index
+                ) as sink:
                     return await self._provider.download(query=item.query, sink=sink)
         except TimeoutError as error:
             msg = (

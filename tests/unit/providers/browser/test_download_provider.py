@@ -18,6 +18,7 @@ from media_tool.providers.base import (
 from media_tool.providers.browser.download_provider import BrowserDownloadProvider
 from media_tool.providers.browser.recipes import SiteRecipe
 from media_tool.storage.local import LocalArtifactStore
+from tests.fakes.accounts import ALICE
 from tests.fakes.browser import DOWNLOAD_PAYLOAD, FakeDownload, FakePage
 from tests.fakes.clock import FakeClock
 
@@ -92,7 +93,7 @@ async def run(
     recipe: SiteRecipe = RECIPE,
 ) -> DownloadArtifact:
     provider = BrowserDownloadProvider(runtime=FakeRuntime(page), recipe=recipe)
-    with store.reserve(job_id="job1", index=0) as sink:
+    with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
         return await provider.download(query=query, sink=sink)
 
 
@@ -128,7 +129,7 @@ class TestTheFlow:
     async def test_it_captures_the_file(self, store: LocalArtifactStore) -> None:
         artifact = await run(matching_page(), store)
 
-        located = store.locate(job_id="job1", index=0, filename=artifact.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=0, filename=artifact.filename)
         assert located.read_bytes() == DOWNLOAD_PAYLOAD
 
     async def test_it_records_where_the_file_came_from(self, store: LocalArtifactStore) -> None:
@@ -148,7 +149,10 @@ class TestTheFlow:
         artifact = await run(page, store)
 
         assert artifact.filename == "passwd"
-        assert store.root in store.locate(job_id="job1", index=0, filename="passwd").parents
+        assert (
+            store.root
+            in store.locate(account=ALICE, job_id="job1", index=0, filename="passwd").parents
+        )
 
     async def test_it_performs_every_step_in_order(self, store: LocalArtifactStore) -> None:
         page = matching_page()

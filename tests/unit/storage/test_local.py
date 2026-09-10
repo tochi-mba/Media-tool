@@ -15,11 +15,13 @@ import pytest
 
 from media_tool.domain.errors import ArtifactNotFoundError, ArtifactTooLargeError
 from media_tool.storage.local import DEFAULT_FILENAME, LocalArtifactStore
+from tests.fakes.accounts import ALICE, BOB
 from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from media_tool.domain.accounts import AccountId
     from media_tool.domain.artifacts import DownloadArtifact
     from media_tool.storage.base import ArtifactStore
 
@@ -44,9 +46,10 @@ def stage(
     content_type: str = "video/x-matroska",
     source_url: str = "https://example.test/dune.mkv",
     index: int = 0,
+    account: AccountId = ALICE,
 ) -> DownloadArtifact:
     """Run one full reserve-write-commit cycle."""
-    with store.reserve(job_id="job1", index=index) as sink:
+    with store.reserve(account=account, job_id="job1", index=index) as sink:
         sink.staging_path.write_bytes(payload)
         return sink.commit(
             suggested_filename=suggested_filename,
@@ -57,7 +60,7 @@ def stage(
 
 def commit_without_writing(store: LocalArtifactStore) -> DownloadArtifact:
     """Commit a reservation that nothing ever wrote to."""
-    with store.reserve(job_id="job1", index=0) as sink:
+    with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
         return sink.commit(
             suggested_filename="a.bin",
             content_type="application/octet-stream",
@@ -67,7 +70,7 @@ def commit_without_writing(store: LocalArtifactStore) -> DownloadArtifact:
 
 def stage_then_raise(store: LocalArtifactStore) -> None:
     """Abandon a reservation by failing partway through."""
-    with store.reserve(job_id="job1", index=0) as sink:
+    with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
         sink.staging_path.write_bytes(PAYLOAD)
         raise RuntimeError
 
@@ -99,14 +102,14 @@ class TestHappyPath:
     def test_the_file_is_readable_afterwards(self, store: LocalArtifactStore) -> None:
         artifact = stage(store)
 
-        located = store.locate(job_id="job1", index=0, filename=artifact.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=0, filename=artifact.filename)
 
         assert located.read_bytes() == PAYLOAD
 
     def test_duration_is_measured_across_the_reservation(
         self, store: LocalArtifactStore, clock: FakeClock
     ) -> None:
-        with store.reserve(job_id="job1", index=0) as sink:
+        with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
             clock.advance(2.5)
             sink.staging_path.write_bytes(PAYLOAD)
             artifact = sink.commit(
@@ -121,8 +124,8 @@ class TestHappyPath:
         for index in (0, 1):
             stage(store, payload=bytes([index]), suggested_filename="same-name.bin", index=index)
 
-        first = store.locate(job_id="job1", index=0, filename="same-name.bin")
-        second = store.locate(job_id="job1", index=1, filename="same-name.bin")
+        first = store.locate(account=ALICE, job_id="job1", index=0, filename="same-name.bin")
+        second = store.locate(account=ALICE, job_id="job1", index=1, filename="same-name.bin")
         assert first.read_bytes() != second.read_bytes()
 
 
@@ -157,7 +160,7 @@ class TestFilenameSanitization:
     ) -> None:
         artifact = stage(store, suggested_filename="../../../../../../tmp/pwned")
 
-        located = store.locate(job_id="job1", index=0, filename=artifact.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=0, filename=artifact.filename)
         assert store.root in located.parents
 
     def test_absurdly_long_names_are_truncated_but_keep_their_extension(
@@ -196,7 +199,7 @@ class TestAbandonedReservations:
     def test_leaving_the_block_without_committing_cleans_up(
         self, store: LocalArtifactStore
     ) -> None:
-        with store.reserve(job_id="job1", index=0) as sink:
+        with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
             sink.staging_path.write_bytes(PAYLOAD)
 
         assert not any(store.staging_root.iterdir())
@@ -219,13 +222,13 @@ class TestAbandonedReservations:
 class TestLocate:
     def test_an_unknown_job_is_not_found(self, store: LocalArtifactStore) -> None:
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="nope", index=0, filename="a.bin")
+            store.locate(account=ALICE, job_id="nope", index=0, filename="a.bin")
 
     def test_a_mismatched_filename_is_not_found(self, store: LocalArtifactStore) -> None:
         stage(store)
 
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="job1", index=0, filename="other.bin")
+            store.locate(account=ALICE, job_id="job1", index=0, filename="other.bin")
 
     @pytest.mark.parametrize("hostile", ["../../../etc/passwd", "/etc/passwd", "..", "a/b"])
     def test_traversal_through_the_lookup_is_refused(
@@ -234,13 +237,13 @@ class TestLocate:
         stage(store)
 
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="job1", index=0, filename=hostile)
+            store.locate(account=ALICE, job_id="job1", index=0, filename=hostile)
 
     def test_traversal_through_the_job_id_is_refused(self, store: LocalArtifactStore) -> None:
         stage(store)
 
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="../..", index=0, filename="dune.mkv")
+            store.locate(account=ALICE, job_id="../..", index=0, filename="dune.mkv")
 
     def test_a_symlink_pointing_out_of_the_root_is_refused(
         self, store: LocalArtifactStore, tmp_path: Path
@@ -249,12 +252,12 @@ class TestLocate:
         # actually for.
         outside = tmp_path / "outside.bin"
         outside.write_bytes(b"secret")
-        item_dir = store.root / "job1" / "0"
+        item_dir = store.root / str(ALICE) / "job1" / "0"
         item_dir.mkdir(parents=True, exist_ok=True)
         (item_dir / "innocent.bin").symlink_to(outside)
 
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="job1", index=0, filename="innocent.bin")
+            store.locate(account=ALICE, job_id="job1", index=0, filename="innocent.bin")
 
 
 def age(path: Path, seconds: float) -> None:
@@ -272,10 +275,10 @@ class TestLinking:
         original = stage(store)
 
         linked = store.link_artifact(
-            job_id="job1", source_index=0, target_index=2, filename=original.filename
+            account=ALICE, job_id="job1", source_index=0, target_index=2, filename=original.filename
         )
 
-        located = store.locate(job_id="job1", index=2, filename=linked.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=2, filename=linked.filename)
         assert located.read_bytes() == PAYLOAD
         assert linked.sha256 == original.sha256
 
@@ -283,11 +286,11 @@ class TestLinking:
         original = stage(store)
 
         store.link_artifact(
-            job_id="job1", source_index=0, target_index=2, filename=original.filename
+            account=ALICE, job_id="job1", source_index=0, target_index=2, filename=original.filename
         )
 
-        source = store.locate(job_id="job1", index=0, filename=original.filename)
-        target = store.locate(job_id="job1", index=2, filename=original.filename)
+        source = store.locate(account=ALICE, job_id="job1", index=0, filename=original.filename)
+        target = store.locate(account=ALICE, job_id="job1", index=2, filename=original.filename)
         assert source.stat().st_ino == target.stat().st_ino
 
     def test_it_falls_back_to_copying_where_hard_links_are_unavailable(
@@ -301,16 +304,16 @@ class TestLinking:
         monkeypatch.setattr(os, "link", no_links)
 
         linked = store.link_artifact(
-            job_id="job1", source_index=0, target_index=2, filename=original.filename
+            account=ALICE, job_id="job1", source_index=0, target_index=2, filename=original.filename
         )
 
-        located = store.locate(job_id="job1", index=2, filename=linked.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=2, filename=linked.filename)
         assert located.read_bytes() == PAYLOAD
 
     def test_linking_a_missing_artifact_is_not_found(self, store: LocalArtifactStore) -> None:
         with pytest.raises(ArtifactNotFoundError):
             store.link_artifact(
-                job_id="job1", source_index=0, target_index=1, filename="absent.bin"
+                account=ALICE, job_id="job1", source_index=0, target_index=1, filename="absent.bin"
             )
 
     def test_relinking_over_an_existing_file_replaces_it(self, store: LocalArtifactStore) -> None:
@@ -318,10 +321,10 @@ class TestLinking:
         stage(store, payload=b"different", suggested_filename=original.filename, index=2)
 
         store.link_artifact(
-            job_id="job1", source_index=0, target_index=2, filename=original.filename
+            account=ALICE, job_id="job1", source_index=0, target_index=2, filename=original.filename
         )
 
-        located = store.locate(job_id="job1", index=2, filename=original.filename)
+        located = store.locate(account=ALICE, job_id="job1", index=2, filename=original.filename)
         assert located.read_bytes() == PAYLOAD
 
 
@@ -331,12 +334,12 @@ class TestPurgeJob:
     def test_purging_a_job_removes_its_files(self, store: LocalArtifactStore) -> None:
         stage(store)
 
-        assert store.purge_job("job1") is True
+        assert store.purge_job(account=ALICE, job_id="job1") is True
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="job1", index=0, filename="dune.mkv")
+            store.locate(account=ALICE, job_id="job1", index=0, filename="dune.mkv")
 
     def test_purging_an_unknown_job_reports_nothing_to_do(self, store: LocalArtifactStore) -> None:
-        assert store.purge_job("never-existed") is False
+        assert store.purge_job(account=ALICE, job_id="never-existed") is False
 
     @pytest.mark.parametrize("hostile", ["../..", "/etc", "a/b", ""])
     def test_a_hostile_job_id_deletes_nothing(
@@ -344,8 +347,73 @@ class TestPurgeJob:
     ) -> None:
         stage(store)
 
-        assert store.purge_job(hostile) is False
-        assert store.locate(job_id="job1", index=0, filename="dune.mkv").exists()
+        assert store.purge_job(account=ALICE, job_id=hostile) is False
+        assert store.locate(account=ALICE, job_id="job1", index=0, filename="dune.mkv").exists()
+
+
+class TestAccountIsolation:
+    """Two accounts' files are in two places, not one place with a check on it."""
+
+    def test_the_account_is_the_outermost_segment(self, store: LocalArtifactStore) -> None:
+        artifact = stage(store, b"hers")
+
+        located = store.locate(account=ALICE, job_id="job1", index=0, filename=artifact.filename)
+
+        assert located.relative_to(store.root).parts[0] == str(ALICE)
+
+    def test_another_accounts_artifact_is_not_found(self, store: LocalArtifactStore) -> None:
+        # Not "refused": a path built for Bob does not name Alice's file at all, so
+        # there is nothing there to refuse him.
+        artifact = stage(store, b"hers")
+
+        with pytest.raises(ArtifactNotFoundError):
+            store.locate(account=BOB, job_id="job1", index=0, filename=artifact.filename)
+
+    def test_the_same_job_id_under_two_accounts_is_two_files(
+        self, store: LocalArtifactStore
+    ) -> None:
+        # Job ids are unique in practice; this holds even if one day they are not.
+        hers = stage(store, b"hers", account=ALICE)
+        his = stage(store, b"his", account=BOB)
+
+        assert (
+            store.locate(account=ALICE, job_id="job1", index=0, filename=hers.filename).read_bytes()
+            == b"hers"
+        )
+        assert (
+            store.locate(account=BOB, job_id="job1", index=0, filename=his.filename).read_bytes()
+            == b"his"
+        )
+
+    def test_purging_one_account_leaves_the_other_alone(self, store: LocalArtifactStore) -> None:
+        hers = stage(store, b"hers", account=ALICE)
+        his = stage(store, b"his", account=BOB)
+
+        assert store.purge_job(account=ALICE, job_id="job1") is True
+
+        with pytest.raises(ArtifactNotFoundError):
+            store.locate(account=ALICE, job_id="job1", index=0, filename=hers.filename)
+        assert store.locate(account=BOB, job_id="job1", index=0, filename=his.filename).exists()
+
+    def test_purging_another_accounts_job_deletes_nothing(self, store: LocalArtifactStore) -> None:
+        hers = stage(store, b"hers", account=ALICE)
+
+        assert store.purge_job(account=BOB, job_id="job1") is False
+        assert store.locate(account=ALICE, job_id="job1", index=0, filename=hers.filename).exists()
+
+    def test_a_link_cannot_cross_accounts(self, store: LocalArtifactStore) -> None:
+        # Deduplication is within one job, and a job has one account; borrowing across
+        # accounts would be one person's download served as another's.
+        hers = stage(store, b"hers", account=ALICE)
+
+        with pytest.raises(ArtifactNotFoundError):
+            store.link_artifact(
+                account=BOB,
+                job_id="job1",
+                source_index=0,
+                target_index=1,
+                filename=hers.filename,
+            )
 
 
 class TestOrphanSweep:
@@ -353,17 +421,17 @@ class TestOrphanSweep:
 
     def test_stale_orphans_are_swept(self, store: LocalArtifactStore) -> None:
         stage(store)
-        age(store.root / "job1", seconds=61)
+        age(store.root / str(ALICE) / "job1", seconds=61)
 
         assert store.purge_expired(ttl_seconds=60) == 1
         with pytest.raises(ArtifactNotFoundError):
-            store.locate(job_id="job1", index=0, filename="dune.mkv")
+            store.locate(account=ALICE, job_id="job1", index=0, filename="dune.mkv")
 
     def test_recent_artifacts_survive_a_sweep(self, store: LocalArtifactStore) -> None:
         stage(store)
 
         assert store.purge_expired(ttl_seconds=60) == 0
-        assert store.locate(job_id="job1", index=0, filename="dune.mkv").exists()
+        assert store.locate(account=ALICE, job_id="job1", index=0, filename="dune.mkv").exists()
 
     def test_sweeping_an_empty_store_is_harmless(self, store: LocalArtifactStore) -> None:
         assert store.purge_expired(ttl_seconds=60) == 0
@@ -372,7 +440,7 @@ class TestOrphanSweep:
         self, store: LocalArtifactStore
     ) -> None:
         stage(store)
-        age(store.root / "job1", seconds=61)
+        age(store.root / str(ALICE) / "job1", seconds=61)
         age(store.staging_root, seconds=61)
 
         store.purge_expired(ttl_seconds=60)
@@ -386,6 +454,27 @@ class TestOrphanSweep:
 
         assert store.purge_expired(ttl_seconds=60) == 0
         assert stray.exists()
+
+    def test_stray_files_inside_an_account_are_left_alone(self, store: LocalArtifactStore) -> None:
+        # The sweep walks two levels now -- accounts, then their jobs -- so anything that
+        # is not a job directory has to be stepped over at both.
+        stage(store)
+        stray = store.root / str(ALICE) / ".DS_Store"
+        stray.write_text("not a job either")
+        age(stray, seconds=999)
+
+        assert store.purge_expired(ttl_seconds=60) == 0
+        assert stray.exists()
+
+    def test_the_account_directory_outlives_its_jobs(self, store: LocalArtifactStore) -> None:
+        # Removing it would race the next job that account submits, and an empty
+        # directory costs nothing.
+        stage(store)
+        age(store.root / str(ALICE) / "job1", seconds=61)
+
+        store.purge_expired(ttl_seconds=60)
+
+        assert (store.root / str(ALICE)).is_dir()
 
 
 class TestHealth:

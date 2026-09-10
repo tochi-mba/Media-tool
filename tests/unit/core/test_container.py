@@ -88,7 +88,7 @@ class TestBackgroundSweeper:
         swept = asyncio.Event()
         real_purge = container.jobs.purge_expired
 
-        async def purge_and_signal(*, ttl_seconds: float) -> list[str]:
+        async def purge_and_signal(*, ttl_seconds: float) -> list[Job]:
             purged = await real_purge(ttl_seconds=ttl_seconds)
             swept.set()
             return purged
