@@ -5,6 +5,11 @@ URL, perform the recipe's steps, find the result that matches the query, then tr
 download inside ``expect_download`` and hand the captured file to the artifact store.
 
 Nothing here is site-specific. Supporting a new site is a recipe file.
+
+When the recipe declares a login, the resolved values are substituted into its ``fill``
+steps and nowhere else, and only after every one of them has been checked -- so a recipe
+asking for a field the stored login does not have fails before a browser process is
+started, rather than after one has been driven to a login form.
 """
 
 from __future__ import annotations
@@ -13,17 +18,21 @@ from typing import TYPE_CHECKING
 
 from media_tool.core.logging import get_logger
 from media_tool.providers.base import (
+    ProviderCredentialMissingError,
     ProviderError,
     ProviderNotFoundError,
     ProviderTimeoutError,
 )
 from media_tool.providers.browser.recipes import (
+    MissingSecretError,
     StepAction,
     placeholders_for,
     render,
+    render_secrets,
 )
 
 if TYPE_CHECKING:
+    from media_tool.core.keyring.credentials import FormSecrets
     from media_tool.domain.artifacts import DownloadArtifact
     from media_tool.domain.media import MediaQuery
     from media_tool.providers.browser.page import BrowserRuntime, DownloadLike, PageLike
@@ -46,27 +55,39 @@ class BrowserDownloadProvider:
     def name(self) -> str:
         return f"browser:{self._recipe.name}"
 
+    @property
+    def requires_login(self) -> str | None:
+        return self._recipe.login.service if self._recipe.login is not None else None
+
     async def healthy(self) -> bool:
         return await self._runtime.healthy()
 
     async def aclose(self) -> None:
         await self._runtime.aclose()
 
-    async def download(self, *, query: MediaQuery, sink: ArtifactSink) -> DownloadArtifact:
+    async def download(
+        self, *, query: MediaQuery, sink: ArtifactSink, secrets: FormSecrets | None = None
+    ) -> DownloadArtifact:
         """Fetch one query, capturing whatever the site downloads.
 
         Raises:
+            ProviderCredentialMissingError: if the recipe needs a login it was not given,
+                or one missing a field it types.
             ProviderNotFoundError: if no result on the page matches the query.
             ProviderTimeoutError: if the site never starts a download.
             ProviderError: if navigation or any step fails.
         """
         placeholders = placeholders_for(query)
         recipe = self._recipe
+        # Resolved before the browser starts. Every failure that can be seen from the
+        # recipe and the credential alone is better seen here than after a page has been
+        # driven halfway through a login.
+        steps = self._with_secrets(recipe.steps, secrets)
 
         async with self._runtime.acquire_page() as page:
             await self._navigate(page, render(recipe.start_url, placeholders, url_encode=True))
 
-            for step in recipe.steps:
+            for step in steps:
                 await self._perform(page, step, placeholders)
 
             await self._require_match(page, placeholders)
@@ -86,6 +107,28 @@ class BrowserDownloadProvider:
                 content_type=DEFAULT_CONTENT_TYPE,
                 source_url=download.url,
             )
+
+    def _with_secrets(self, steps: list[Step], secrets: FormSecrets | None) -> list[Step]:
+        """Fill in the recipe's login values, or refuse if they are not usable.
+
+        Substituted into ``fill`` values only, and only here. The rendered steps live in
+        one local for the length of one download and are handed to the page; nothing
+        else in this class sees them, and none of them reaches a log record.
+        """
+        if self._recipe.login is None:
+            return steps
+
+        if secrets is None:
+            msg = (
+                f"the {self._recipe.name!r} recipe needs the stored login for "
+                f"{self._recipe.login.service!r}, which was not provided"
+            )
+            raise ProviderCredentialMissingError(msg)
+
+        try:
+            return [_typed(step, secrets) for step in steps]
+        except MissingSecretError as error:
+            raise ProviderCredentialMissingError(str(error)) from error
 
     async def _save(self, download: DownloadLike, sink: ArtifactSink) -> None:
         """Move the captured bytes into the staging slot.
@@ -116,6 +159,7 @@ class BrowserDownloadProvider:
             else:
                 await page.wait_for_selector(selector)
         except Exception as error:
+            # The selector, never the value: on a fill step the value is what was typed.
             msg = f"step {step.action.value} on {selector!r} failed: {error}"
             raise ProviderError(msg) from error
 
@@ -168,3 +212,10 @@ class BrowserDownloadProvider:
         else:
             download: DownloadLike = await handle.value
             return download
+
+
+def _typed(step: Step, secrets: FormSecrets) -> Step:
+    """Return ``step`` with its login values filled in, if it types any."""
+    if step.action is not StepAction.FILL:
+        return step
+    return step.model_copy(update={"value": render_secrets(step.value or "", secrets)})

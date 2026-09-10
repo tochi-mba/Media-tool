@@ -8,9 +8,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from media_tool.core.keyring.credentials import FormSecrets
 from media_tool.domain.media import MediaQuery
 from media_tool.providers.base import (
     DownloadProvider,
+    ProviderCredentialMissingError,
     ProviderError,
     ProviderNotFoundError,
     ProviderTimeoutError,
@@ -91,10 +93,11 @@ async def run(
     store: LocalArtifactStore,
     query: MediaQuery = SEVERANCE,
     recipe: SiteRecipe = RECIPE,
+    secrets: FormSecrets | None = None,
 ) -> DownloadArtifact:
     provider = BrowserDownloadProvider(runtime=FakeRuntime(page), recipe=recipe)
     with store.reserve(account=ALICE, job_id="job1", index=0) as sink:
-        return await provider.download(query=query, sink=sink)
+        return await provider.download(query=query, sink=sink, secrets=secrets)
 
 
 class TestPortConformance:
@@ -321,3 +324,95 @@ class _ExplodingDownload:
     async def save_as(self, path: object) -> None:  # noqa: ARG002 - mirrors the real signature
         msg = "disk went away"
         raise OSError(msg)
+
+
+LOGIN_RECIPE = SiteRecipe.model_validate(
+    {
+        "name": "walled-garden",
+        "start_url": "https://example.test/search?q={query}",
+        "steps": [
+            {"action": "fill", "selector": "#user", "value": "{secret.username}"},
+            {"action": "fill", "selector": "#pass", "value": "{secret.password}"},
+            {"action": "click", "selector": "button[type=submit]"},
+        ],
+        "result_selector": ".result",
+        "download_trigger": {"action": "click", "selector": "a.download"},
+        "login": {"service": "somesite"},
+    }
+)
+
+SECRETS = FormSecrets(service="somesite", fields={"username": "eve", "password": "hunter2"})
+
+
+class TestLoggingIn:
+    def test_it_declares_the_login_its_recipe_needs(self) -> None:
+        # Declared rather than discovered, so the caller can resolve the credential
+        # before any browser starts.
+        provider = BrowserDownloadProvider(
+            runtime=FakeRuntime(matching_page()), recipe=LOGIN_RECIPE
+        )
+
+        assert provider.requires_login == "somesite"
+
+    def test_a_recipe_without_a_login_declares_none(self) -> None:
+        provider = BrowserDownloadProvider(runtime=FakeRuntime(matching_page()), recipe=RECIPE)
+
+        assert provider.requires_login is None
+
+    async def test_the_login_values_are_typed_into_the_form(
+        self, store: LocalArtifactStore
+    ) -> None:
+        page = matching_page()
+
+        await run(page, store, recipe=LOGIN_RECIPE, secrets=SECRETS)
+
+        assert ("fill", "#user=eve") in page.actions
+        assert ("fill", "#pass=hunter2") in page.actions
+
+    async def test_no_login_value_reaches_the_url(self, store: LocalArtifactStore) -> None:
+        # The recipe model forbids it and this proves the rendering agrees: a password in
+        # a URL is a password in an access log.
+        page = matching_page()
+
+        await run(page, store, recipe=LOGIN_RECIPE, secrets=SECRETS)
+
+        visited = [target for kind, target in page.actions if kind == "goto"]
+
+        assert visited
+        assert all("hunter2" not in url for url in visited)
+
+    async def test_a_missing_field_fails_before_the_browser_is_touched(
+        self, store: LocalArtifactStore
+    ) -> None:
+        # The whole point of resolving up front: a recipe asking for a field the stored
+        # login does not have should not first drive a browser to a login form.
+        page = matching_page()
+        thin = FormSecrets(service="somesite", fields={"username": "eve"})
+
+        with pytest.raises(ProviderCredentialMissingError, match="password"):
+            await run(page, store, recipe=LOGIN_RECIPE, secrets=thin)
+
+        assert page.actions == []
+
+    async def test_a_recipe_needing_a_login_refuses_to_run_without_one(
+        self, store: LocalArtifactStore
+    ) -> None:
+        page = matching_page()
+
+        with pytest.raises(ProviderCredentialMissingError, match="somesite"):
+            await run(page, store, recipe=LOGIN_RECIPE, secrets=None)
+
+        assert page.actions == []
+
+    async def test_a_step_failure_does_not_report_what_was_typed(
+        self, store: LocalArtifactStore
+    ) -> None:
+        # A failing fill step is the most likely place for a password to reach a log, so
+        # the message names the selector and never the value.
+        page = matching_page(fail_on={"#pass": RuntimeError("element detached")})
+
+        with pytest.raises(ProviderError) as caught:
+            await run(page, store, recipe=LOGIN_RECIPE, secrets=SECRETS)
+
+        assert "#pass" in str(caught.value)
+        assert "hunter2" not in str(caught.value)

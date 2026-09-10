@@ -63,7 +63,8 @@ class CreateDownloadJobRequest(BaseModel):
                     "items": [
                         {"name": "Severance", "season": 1, "episode": 3},
                         {"name": "Dune", "year": 2021},
-                    ]
+                    ],
+                    "profile": "default",
                 }
             ]
         },
@@ -74,6 +75,17 @@ class CreateDownloadJobRequest(BaseModel):
         description=(
             "Items to fetch. Duplicates are downloaded once and the result is reported "
             "against every position they were submitted in."
+        ),
+    )
+    profile: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Which of your stored credential profiles to use if the site needs a login. "
+            "Names a profile you hold in keyring; omit it to use your default one. It "
+            "never names an account -- whose credentials these are comes from your "
+            "token, so this cannot be used to reach somebody else's."
         ),
     )
 

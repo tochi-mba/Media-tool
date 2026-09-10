@@ -131,6 +131,14 @@ class Settings(BaseSettings):
     anonymous_account: str = "local"
     """Who every request belongs to when authentication is off."""
 
+    default_profile: str = "default"
+    """The credential profile used when a request does not name one.
+
+    Must match a profile name people actually hold in keyring; it is not created here,
+    and naming one that does not exist fails the item with "no such credential" rather
+    than silently using another.
+    """
+
     # -- Per-account limits ------------------------------------------------------------
     # One process shared by a handful of people. Without these, any one of them can make
     # it useless for the rest by accident.

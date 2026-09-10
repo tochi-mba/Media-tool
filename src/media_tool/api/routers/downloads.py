@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query, Response, status
+from fastapi import APIRouter, Path, Query, Request, Response, status
 from fastapi.responses import FileResponse
 
 from media_tool.api.dependencies import AccountDep, ContainerDep
@@ -20,6 +20,9 @@ from media_tool.api.schemas.downloads import (
     JobView,
     QueryView,
 )
+from media_tool.core.config import Settings
+from media_tool.core.keyring.authenticator import BEARER_PREFIX
+from media_tool.core.keyring.credentials import Caller
 from media_tool.domain.artifacts import DownloadArtifact
 from media_tool.domain.errors import InvalidMediaQueryError, JobNotFoundError
 from media_tool.domain.jobs import ItemStatus, Job, JobItem
@@ -66,6 +69,7 @@ async def create_download_job(
     payload: CreateDownloadJobRequest,
     container: ContainerDep,
     account: AccountDep,
+    request: Request,
     response: Response,
 ) -> CreateDownloadJobResponse:
     """Validate a batch, register it, and start work."""
@@ -86,7 +90,9 @@ async def create_download_job(
 
     job = Job.create(account=account, queries=queries, now=container.clock.now())
     await container.jobs.add(job)
-    await container.runner.submit(job)
+    # The caller's own token travels with the work rather than being stored on it, so
+    # that a site needing a login is driven as them and by nobody else.
+    await container.runner.submit(job, caller=_caller(request, payload, settings))
 
     location = _job_path(job.job_id)
     response.headers["Location"] = location
@@ -204,6 +210,25 @@ async def fetch_download_file(
         path,
         media_type=item.artifact.content_type,
         filename=item.artifact.filename,
+    )
+
+
+def _caller(
+    request: Request, payload: CreateDownloadJobRequest, settings: Settings
+) -> Caller | None:
+    """The token and profile this job's credentials will be resolved with.
+
+    ``None`` when the request carried no bearer token, which happens only where
+    authentication is switched off -- and there, a site needing a login is refused with
+    a message saying exactly that.
+    """
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith(BEARER_PREFIX):
+        return None
+
+    return Caller(
+        token=authorization[len(BEARER_PREFIX) :],
+        profile=payload.profile or settings.default_profile,
     )
 
 

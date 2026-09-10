@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from media_tool.providers.base import ProviderError
 
 if TYPE_CHECKING:
+    from media_tool.core.keyring.credentials import FormSecrets
     from media_tool.domain.artifacts import DownloadArtifact
     from media_tool.domain.media import MediaQuery
     from media_tool.storage.base import ArtifactSink
@@ -30,13 +31,18 @@ class FakeProvider:
         fail_times: dict[str, int] | None = None,
         hang_keys: frozenset[str] = frozenset(),
         healthy_result: bool = True,
+        login_service: str | None = None,
     ) -> None:
         self._fail_with = fail_with or {}
         self._fail_times = dict(fail_times or {})
         self._hang_keys = hang_keys
         self._healthy = healthy_result
+        self._login_service = login_service
 
         self.calls: list[str] = []
+        self.secrets_seen: list[FormSecrets | None] = []
+        """What was handed to each call, so a test can assert what reached the site."""
+
         self.concurrent = 0
         self.max_concurrent = 0
         self.closed = False
@@ -45,14 +51,28 @@ class FakeProvider:
     def name(self) -> str:
         return "fake"
 
+    @property
+    def requires_login(self) -> str | None:
+        return self._login_service
+
     async def healthy(self) -> bool:
         return self._healthy
 
     async def aclose(self) -> None:
         self.closed = True
 
-    async def download(self, *, query: MediaQuery, sink: ArtifactSink) -> DownloadArtifact:
+    async def download(
+        self, *, query: MediaQuery, sink: ArtifactSink, secrets: FormSecrets | None = None
+    ) -> DownloadArtifact:
+        if secrets is not None and self._login_service is None:
+            # As strict as the real providers: a provider handed a credential it did not
+            # ask for is a wiring mistake, and a fake that shrugged at one would let that
+            # mistake through to production.
+            msg = "this provider needs no login and will not be given one"
+            raise ProviderError(msg)
+
         self.calls.append(query.key)
+        self.secrets_seen.append(secrets)
         self.concurrent += 1
         self.max_concurrent = max(self.max_concurrent, self.concurrent)
         try:

@@ -11,11 +11,12 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from media_tool.domain.media import MediaKind
-from media_tool.providers.base import ProviderNotFoundError
+from media_tool.providers.base import ProviderError, ProviderNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
 
+    from media_tool.core.keyring.credentials import FormSecrets
     from media_tool.domain.artifacts import DownloadArtifact
     from media_tool.domain.media import MediaQuery
     from media_tool.storage.base import ArtifactSink
@@ -42,13 +43,27 @@ class StubDownloadProvider:
     def name(self) -> str:
         return "stub"
 
+    @property
+    def requires_login(self) -> str | None:
+        """Nothing to log in to. It fabricates files."""
+        return None
+
     async def healthy(self) -> bool:
         return True
 
     async def aclose(self) -> None:
         """Nothing is held open."""
 
-    async def download(self, *, query: MediaQuery, sink: ArtifactSink) -> DownloadArtifact:
+    async def download(
+        self, *, query: MediaQuery, sink: ArtifactSink, secrets: FormSecrets | None = None
+    ) -> DownloadArtifact:
+        if secrets is not None:
+            # Not merely unused: a provider handed a credential it did not ask for is a
+            # wiring mistake, and quietly ignoring one is how a secret ends up somewhere
+            # nobody meant it to be.
+            msg = "the stub provider needs no login and will not be given one"
+            raise ProviderError(msg)
+
         if query.key in self._missing:
             msg = f"no result for {query.name!r}"
             raise ProviderNotFoundError(msg)

@@ -303,9 +303,18 @@ class TestAuthenticationDisabled:
 
         assert response.json() == {"account": "solo"}
 
+    async def test_a_submission_without_a_token_carries_no_caller(self, solo: AsyncClient) -> None:
+        # Nothing to forward, so nothing is forwarded. A recipe that needs a login then
+        # fails saying exactly that, which is tested where the runner decides it.
+        accepted = await solo.post("/v1/downloads", json={"items": [{"name": "Dune"}]})
+
+        assert accepted.status_code == 202
+
     def test_no_keyring_client_is_built_at_all(self, settings: Settings) -> None:
-        # Nothing to connect to, so nothing that could try.
+        # Nothing to connect to, so nothing that could try -- and no credential source
+        # either, which is what makes a login-needing recipe say so rather than run.
         container = Container.build(settings)
 
         assert container.keyring is None
+        assert container.credentials is None
         assert container.authenticator.describes == "disabled"

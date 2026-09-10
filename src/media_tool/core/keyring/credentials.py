@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from media_tool.core.logging import get_logger
 from media_tool.domain.errors import (
@@ -74,6 +74,34 @@ class FormSecrets:
         """Field names are useful for diagnosis; field values are never printable."""
         names = ",".join(sorted(self.fields))
         return f"FormSecrets(service={self.service!r}, fields=<{names}: redacted>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class Caller:
+    """Who a running job is being done for, and with what.
+
+    Held by the runner for the length of one job and passed down to each attempt. It is
+    deliberately not on the :class:`~media_tool.domain.jobs.Job`: the job is the record
+    that is stored, read back, and rendered into responses, and a token on it would be a
+    token in all three.
+    """
+
+    token: str
+    """The caller's own short-lived token, forwarded to keyring exactly as it arrived."""
+
+    profile: str
+    """Which of their credential sets to use."""
+
+    def __repr__(self) -> str:
+        return f"Caller(profile={self.profile!r}, token=<redacted>)"
+
+
+class CredentialSource(Protocol):
+    """Where a running download gets somebody's stored login."""
+
+    async def form_secrets(self, *, user_token: str, profile: str, service: str) -> FormSecrets:
+        """Read the login values for one person, profile and service."""
+        ...
 
 
 class KeyringCredentials:

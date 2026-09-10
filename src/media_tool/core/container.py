@@ -19,6 +19,7 @@ from media_tool.core.keyring.authenticator import (
     SingleAccountAuthenticator,
 )
 from media_tool.core.keyring.client import KeyringClient
+from media_tool.core.keyring.credentials import KeyringCredentials
 from media_tool.core.keyring.tokens import TokenVerifier
 from media_tool.core.limits import AccountQuotas, AccountRateLimiter
 from media_tool.core.logging import get_logger
@@ -56,6 +57,7 @@ class Container:
     rate_limiter: AccountRateLimiter
     started_monotonic: float
     keyring: KeyringClient | None = None
+    credentials: KeyringCredentials | None = None
     _sweeper: asyncio.Task[None] | None = None
 
     @classmethod
@@ -84,7 +86,7 @@ class Container:
             max_file_bytes=settings.max_file_bytes,
         )
         provider = build_provider(settings)
-        keyring, authenticator = _build_authentication(
+        keyring, authenticator, credentials = _build_authentication(
             settings, clock=clock, transport=keyring_transport
         )
 
@@ -100,8 +102,10 @@ class Container:
                 artifact_store=artifacts,
                 clock=clock,
                 settings=settings,
+                credentials=credentials,
             ),
             authenticator=authenticator,
+            credentials=credentials,
             quotas=AccountQuotas(jobs=jobs, artifacts=artifacts, settings=settings),
             rate_limiter=AccountRateLimiter(
                 clock=clock,
@@ -165,7 +169,7 @@ def _build_authentication(
     *,
     clock: Clock,
     transport: httpx.AsyncBaseTransport | None,
-) -> tuple[KeyringClient | None, Authenticator]:
+) -> tuple[KeyringClient | None, Authenticator, KeyringCredentials | None]:
     """Choose how callers are identified, and say so in the log either way.
 
     The two modes are two objects rather than one object with a flag, so that nothing
@@ -178,7 +182,9 @@ def _build_authentication(
             account=str(account),
             detail="every request is attributed to one account; do not expose this",
         )
-        return None, SingleAccountAuthenticator(account)
+        # No keyring, so no credentials either: a recipe that needs a login says so
+        # rather than being run without one.
+        return None, SingleAccountAuthenticator(account), None
 
     # Guaranteed present: Settings refuses to construct with authentication on and
     # keyring unconfigured.
@@ -197,4 +203,8 @@ def _build_authentication(
         cache_ttl_seconds=settings.keyring_jwks_cache_ttl_seconds,
     )
     logger.info("authentication_enabled", keyring=base_url, audience=settings.keyring_audience)
-    return keyring, KeyringAuthenticator(verifier)
+    return (
+        keyring,
+        KeyringAuthenticator(verifier),
+        KeyringCredentials(client=keyring, verifier=verifier),
+    )

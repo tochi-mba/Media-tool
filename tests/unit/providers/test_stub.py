@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from media_tool.domain.media import MediaQuery
-from media_tool.providers.base import DownloadProvider, ProviderNotFoundError
+from media_tool.providers.base import DownloadProvider, ProviderError, ProviderNotFoundError
 from media_tool.providers.stub import StubDownloadProvider
 from media_tool.storage.local import LocalArtifactStore
 from tests.fakes.accounts import ALICE
@@ -139,3 +139,23 @@ class TestConfiguredFailures:
         artifact = await download(provider, store, MediaQuery.create(name="Arrival", year=2016))
 
         assert artifact.filename == "arrival-2016.stub.bin"
+
+
+class TestItAsksForNoLogin:
+    def test_it_declares_that_it_needs_none(self) -> None:
+        assert StubDownloadProvider().requires_login is None
+
+    async def test_being_handed_one_anyway_is_an_error(self, store: LocalArtifactStore) -> None:
+        # A provider given a credential it did not ask for is a wiring mistake, and
+        # shrugging at one is how a secret ends up somewhere nobody meant it to be.
+        from media_tool.core.keyring.credentials import FormSecrets
+
+        with (
+            store.reserve(account=ALICE, job_id="job1", index=0) as sink,
+            pytest.raises(ProviderError, match="needs no login"),
+        ):
+            await StubDownloadProvider().download(
+                query=MediaQuery.create(name="Dune"),
+                sink=sink,
+                secrets=FormSecrets(service="somesite", fields={}),
+            )
